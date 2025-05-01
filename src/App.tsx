@@ -1,51 +1,45 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useTelemetry } from "./hooks/useTelemetry";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+	const { location, error } = useTelemetry();
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+	return (
+		<main>
+			<header className="p-4 bg-white shadow-sm border-b border-gray-200">
+				<h1 className="font-bold">TrainLCD THQ</h1>
+			</header>
 
-  return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vitejs.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://reactjs.org" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
-  );
+			<section className="p-4">
+				<h2 className="text-lg font-semibold">Telemetry</h2>
+				<div className="mt-4">
+					<h3 className="text-md font-semibold">Location</h3>
+					{location ? (
+						<div className="mt-2">
+							<p>Latitude: {location.lat}</p>
+							<p>Longitude: {location.lon}</p>
+							<p>Accuracy: {location.accuracy} m</p>
+							<p>Speed: {location.speed} m/s</p>
+							<p>G-Force: {location.gForce} g</p>
+							<p>Timestamp: {new Date(location.timestamp).toLocaleString()}</p>
+						</div>
+					) : (
+						<p className="text-gray-500">No location data available.</p>
+					)}
+				</div>
+				<div className="mt-4">
+					<h3 className="text-md font-semibold">Error</h3>
+					{error ? (
+						<div className="mt-2">
+							<p>Error Type: {error.type}</p>
+							<p>Raw Data: {JSON.stringify(error.raw)}</p>
+						</div>
+					) : (
+						<p className="text-gray-500">No error data available.</p>
+					)}
+				</div>
+			</section>
+		</main>
+	);
 }
 
 export default App;
