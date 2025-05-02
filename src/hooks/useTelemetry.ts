@@ -1,12 +1,12 @@
+import { useAtom } from "jotai";
+import uniqBy from "lodash/uniqBy";
 import { useCallback, useEffect, useState } from "react";
+import { telemetryListAtom } from "../atoms/telemetryItem";
 import {
 	type ErrorData,
 	type LocationData,
 	registerTelemetryListener,
 } from "../domain/commands";
-import { useAtom } from "jotai";
-import { telemetryListAtom } from "../atoms/telemetryItem";
-import uniqBy from "lodash/uniqBy";
 
 export const useTelemetry = () => {
 	const [error, setError] = useState<ErrorData | null>(null);

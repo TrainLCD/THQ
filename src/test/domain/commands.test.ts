@@ -32,7 +32,6 @@ describe("registerTelemetryListener (zod)", () => {
 				lon: 139,
 				accuracy: 5,
 				speed: 10,
-				gForce: 9.8,
 				timestamp: 1000,
 			},
 		};
@@ -80,7 +79,6 @@ describe("registerTelemetryListener (zod)", () => {
 			lon: 139,
 			accuracy: 5,
 			speed: 10,
-			gForce: 9.8,
 			timestamp: 1000,
 		};
 

@@ -51,7 +51,6 @@ describe("useTelemetry", () => {
 				lon: 139,
 				accuracy: 5,
 				speed: 1.2,
-				gForce: 1.01,
 				timestamp: 1234567890,
 			});
 		});
@@ -115,7 +114,6 @@ describe("useTelemetry", () => {
 					lon: 139,
 					accuracy: 5,
 					speed: 1,
-					gForce: 1,
 					timestamp: i, // ユニークな値で順序確認用
 				});
 			}

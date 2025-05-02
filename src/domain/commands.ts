@@ -11,7 +11,6 @@ export const LocationData = z.object({
 	lon: z.number(),
 	accuracy: z.number().nullable(),
 	speed: z.number(),
-	gForce: z.number(),
 	timestamp: z.number(),
 });
 export type LocationData = z.infer<typeof LocationData>;

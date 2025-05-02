@@ -9,7 +9,6 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 #[derive(Deserialize)]
 pub struct RawTelemetryPayload {
     pub coords: RawCoords,
-    pub accel: AccelData,
     pub timestamp: u64,
 }
 
@@ -19,19 +18,6 @@ pub struct RawCoords {
     pub longitude: f64,
     pub accuracy: Option<f64>,
     pub speed: f64,
-}
-
-#[derive(Deserialize)]
-pub struct AccelData {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-}
-
-impl AccelData {
-    pub fn g_force(&self) -> f64 {
-        (self.x.powi(2) + self.y.powi(2) + self.z.powi(2)).sqrt()
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,8 +36,6 @@ pub struct LocationData {
     lon: f64,
     accuracy: Option<f64>,
     speed: f64,
-    #[serde(rename = "gForce")]
-    g_force: f64,
     timestamp: u64,
 }
 
@@ -83,7 +67,6 @@ pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
                                     lon: payload.coords.longitude,
                                     accuracy: payload.coords.accuracy,
                                     speed: payload.coords.speed,
-                                    g_force: payload.accel.g_force(),
                                     timestamp: payload.timestamp,
                                 });
                                 if let Some(window) = app.get_webview_window("main") {
@@ -126,7 +109,6 @@ mod tests {
                 "lon": 139.0,
                 "accuracy": 5.0,
                 "speed": 10.0,
-                "gForce": 9.8,
                 "timestamp": 1234567890
             }
         });
@@ -137,7 +119,6 @@ mod tests {
             TelemetryEvent::LocationUpdate(data) => {
                 assert_eq!(data.lat, 35.0);
                 assert_eq!(data.lon, 139.0);
-                assert_eq!(data.g_force, 9.8);
             }
             _ => panic!("expected location_update variant"),
         }
@@ -173,7 +154,6 @@ mod tests {
                 "lon": 139.0,
                 "accuracy": 5.0,
                 "speed": 10.0,
-                "gForce": 9.8,
                 "timestamp": 1234567890
             }
         });

@@ -34,7 +34,6 @@ function App() {
 						timestamp: formattedTime,
 						accuracy: t.accuracy,
 						speed: t.speed,
-						gForce: t.gForce,
 					},
 				];
 			}),
@@ -86,7 +85,6 @@ function App() {
 									<th className="p-2 border border-gray-200">lat</th>
 									<th className="p-2 border border-gray-200">lon</th>
 									<th className="p-2 border border-gray-200">speed(m/s)</th>
-									<th className="p-2 border border-gray-200">gForce(g)</th>
 									<th className="p-2 border border-gray-200">accuracy(m)</th>
 								</tr>
 							</thead>
@@ -104,9 +102,6 @@ function App() {
 										</td>
 										<td className="p-2 border border-gray-200">
 											{t.speed.toFixed(2)}
-										</td>
-										<td className="p-2 border border-gray-200">
-											{t.gForce.toFixed(3)}
 										</td>
 										{(t?.accuracy ?? 0) > 100 ? (
 											<td className="p-2 border border-gray-200 text-red-600 font-bold">
