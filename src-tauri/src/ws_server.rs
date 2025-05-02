@@ -9,6 +9,8 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 #[derive(Deserialize)]
 pub struct RawTelemetryPayload {
     pub coords: RawCoords,
+    pub device: String,
+    pub state: String,
     pub timestamp: u64,
 }
 
@@ -36,6 +38,8 @@ pub struct LocationData {
     lon: f64,
     accuracy: Option<f64>,
     speed: f64,
+    device: String,
+    state: String,
     timestamp: u64,
 }
 
@@ -67,6 +71,8 @@ pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
                                     lon: payload.coords.longitude,
                                     accuracy: payload.coords.accuracy,
                                     speed: payload.coords.speed,
+                                    device: payload.device,
+                                    state: payload.state,
                                     timestamp: payload.timestamp,
                                 });
                                 if let Some(window) = app.get_webview_window("main") {

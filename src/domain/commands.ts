@@ -5,6 +5,14 @@ export type TelemetryEvent =
 	| { type: "location_update"; data: LocationData }
 	| { type: "error"; data: ErrorData };
 
+export const MovingState = z.enum([
+	"arrived",
+	"approaching",
+	"passing",
+	"moving",
+]);
+export type MovingState = z.infer<typeof MovingState>;
+
 export const LocationData = z.object({
 	id: z.string(),
 	lat: z.number(),
@@ -12,6 +20,8 @@ export const LocationData = z.object({
 	accuracy: z.number().nullable(),
 	speed: z.number(),
 	timestamp: z.number(),
+	state: MovingState,
+	device: z.string(),
 });
 export type LocationData = z.infer<typeof LocationData>;
 

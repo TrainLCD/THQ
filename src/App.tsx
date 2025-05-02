@@ -4,6 +4,13 @@ import { CurrentLocationMap } from "./components/CurrentLocationMap";
 import { SpeedChart } from "./components/SpeedChart";
 import { useTelemetry } from "./hooks/useTelemetry";
 
+const STATE_ICONS = {
+	arrived: "🚉",
+	approaching: "🔜",
+	passing: "⏩",
+	moving: "▶️",
+} as const;
+
 function App() {
 	const { telemetryList, error } = useTelemetry();
 
@@ -81,24 +88,25 @@ function App() {
 						<table className="bg-white w-full border-spacing-2 border border-gray-200 rounded-md">
 							<thead>
 								<tr>
+									<th className="p-2 border border-gray-200 w-16">state</th>
 									<th className="p-2 border border-gray-200">timestamp</th>
-									<th className="p-2 border border-gray-200">lat</th>
-									<th className="p-2 border border-gray-200">lon</th>
+									<th className="p-2 border border-gray-200">coordinates</th>
 									<th className="p-2 border border-gray-200">speed(m/s)</th>
 									<th className="p-2 border border-gray-200">accuracy(m)</th>
+									<th className="p-2 border border-gray-200">device</th>
 								</tr>
 							</thead>
 							<tbody>
 								{telemetryLogs.map((t) => (
 									<tr key={t.id}>
+										<td className="p-2 border border-gray-200 w-16 text-center">
+											{STATE_ICONS[t.state]}
+										</td>
 										<td className="p-2 border border-gray-200">
 											{new Date(t.timestamp).toLocaleString()}
 										</td>
 										<td className="p-2 border border-gray-200">
-											{t.lat.toFixed(5)}
-										</td>
-										<td className="p-2 border border-gray-200">
-											{t.lon.toFixed(5)}
+											{t.lon.toFixed(5)}, {t.lat.toFixed(5)}
 										</td>
 										<td className="p-2 border border-gray-200">
 											{t.speed.toFixed(2)}
@@ -112,6 +120,7 @@ function App() {
 												{t.accuracy?.toFixed(2)}
 											</td>
 										)}
+										<td className="p-2 border border-gray-200">{t.device}</td>
 									</tr>
 								))}
 							</tbody>
