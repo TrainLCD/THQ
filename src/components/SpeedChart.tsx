@@ -35,12 +35,14 @@ export const SpeedChart = ({
 				dataKey="speed"
 				stroke="#8884d8"
 				name="Speed (m/s)"
+				isAnimationActive={false}
 			/>
 			<Line
 				yAxisId="right"
 				dataKey="accuracy"
 				stroke="#ff7300"
 				name="Accuracy (m)"
+				isAnimationActive={false}
 			/>
 		</LineChart>
 	</ResponsiveContainer>
