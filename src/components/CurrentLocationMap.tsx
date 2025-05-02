@@ -19,7 +19,7 @@ export const CurrentLocationMap = ({
 		<MapContainer
 			center={[lat, lon]}
 			zoom={15}
-			className="size-full"
+			className="size-full rounded-md"
 			scrollWheelZoom={false}
 		>
 			<TileLayer

@@ -1,6 +1,8 @@
 import { useTelemetry } from "./hooks/useTelemetry";
 import { CurrentLocationMap } from "./components/CurrentLocationMap";
 import { useMemo } from "react";
+import { SpeedChart } from "./components/SpeedChart";
+import uniqBy from "lodash/uniqBy";
 
 function App() {
 	const { telemetryList, error } = useTelemetry();
@@ -8,6 +10,38 @@ function App() {
 	const latestTelemetry = useMemo(
 		() => telemetryList[telemetryList.length - 1],
 		[telemetryList],
+	);
+
+	const telemetryLogs = useMemo(
+		() => uniqBy(telemetryList, "timestamp"),
+		[telemetryList],
+	);
+
+	const locations = useMemo(
+		() => telemetryLogs.map((t) => [t.lat, t.lon]),
+		[telemetryLogs],
+	);
+
+	const speedChartData = useMemo(
+		() =>
+			telemetryLogs.flatMap((t) => {
+				const date = new Date(t.timestamp);
+				const hours = date.getHours();
+				const minutes = date.getMinutes();
+				const seconds = date.getSeconds();
+				const formattedTime = `${hours}:${minutes}:${seconds}`;
+
+				return [
+					{
+						name: date.toLocaleString(),
+						timestamp: formattedTime,
+						accuracy: t.accuracy,
+						speed: t.speed,
+						gForce: t.gForce,
+					},
+				];
+			}),
+		[telemetryLogs],
 	);
 
 	return (
@@ -18,17 +52,20 @@ function App() {
 
 			<section className="px-4 pb-4 mt-4">
 				<h3 className="text-md font-semibold">Visualize</h3>
-				<div className="mt-2">
-					{latestTelemetry ? (
-						<div className="h-96 w-full mt-2">
-							<CurrentLocationMap
-								location={[latestTelemetry.lat, latestTelemetry.lon]}
-							/>
+				{latestTelemetry ? (
+					<div className="mt-2 flex gap-4">
+						<div className="h-96 w-1/2">
+							<CurrentLocationMap locations={locations} />
 						</div>
-					) : (
+						<div className="h-96 w-1/2">
+							<SpeedChart data={speedChartData} />
+						</div>
+					</div>
+				) : (
+					<div className="w-1/2">
 						<p className="text-gray-500">No location data available.</p>
-					)}
-				</div>
+					</div>
+				)}
 
 				<div className="mt-4">
 					<h3 className="text-md font-semibold">Error</h3>
@@ -45,7 +82,7 @@ function App() {
 				<div className="mt-4">
 					<h3 className="text-md font-semibold">Logs</h3>
 					<div className="mt-2">
-						<table className="bg-white w-full border-spacing-2 border border-gray-200 rounded-lg">
+						<table className="bg-white w-full border-spacing-2 border border-gray-200 rounded-md">
 							<thead>
 								<tr>
 									<th className="p-2 border border-gray-200">timestamp</th>
@@ -57,10 +94,10 @@ function App() {
 								</tr>
 							</thead>
 							<tbody>
-								{telemetryList.map((t) => (
+								{telemetryLogs.map((t) => (
 									<tr key={t.timestamp}>
 										<td className="p-2 border border-gray-200">
-											{new Date(latestTelemetry.timestamp).toLocaleString()}
+											{new Date(t.timestamp).toLocaleString()}
 										</td>
 										<td className="p-2 border border-gray-200">
 											{t.lat.toFixed(5)}
