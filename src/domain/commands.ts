@@ -6,6 +6,7 @@ export type TelemetryEvent =
 	| { type: "error"; data: ErrorData };
 
 export const LocationData = z.object({
+	id: z.string(),
 	lat: z.number(),
 	lon: z.number(),
 	accuracy: z.number().nullable(),

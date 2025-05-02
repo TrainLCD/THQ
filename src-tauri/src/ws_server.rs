@@ -45,6 +45,7 @@ pub enum TelemetryEvent {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LocationData {
+    id: String,
     lat: f64,
     lon: f64,
     accuracy: Option<f64>,
@@ -77,6 +78,7 @@ pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
                         match serde_json::from_str::<RawTelemetryPayload>(&txt) {
                             Ok(payload) => {
                                 let event = TelemetryEvent::LocationUpdate(LocationData {
+                                    id: nanoid::nanoid!(),
                                     lat: payload.coords.latitude,
                                     lon: payload.coords.longitude,
                                     accuracy: payload.coords.accuracy,

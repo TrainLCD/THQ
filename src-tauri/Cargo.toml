@@ -26,4 +26,5 @@ anyhow = "1.0.98"
 tokio = { version = "1.44.2", features = ["net"] }
 tokio-tungstenite = "0.26.2"
 futures-util = "0.3.31"
+nanoid = "0.4.0"
 

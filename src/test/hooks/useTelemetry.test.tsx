@@ -46,6 +46,7 @@ describe("useTelemetry", () => {
 
 		act(() => {
 			locationHandler?.({
+				id: "test-id",
 				lat: 35,
 				lon: 139,
 				accuracy: 5,
@@ -109,6 +110,7 @@ describe("useTelemetry", () => {
 		act(() => {
 			for (let i = 0; i < 1050; i++) {
 				locationHandler?.({
+					id: "test-id",
 					lat: 35,
 					lon: 139,
 					accuracy: 5,

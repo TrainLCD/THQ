@@ -27,6 +27,7 @@ describe("registerTelemetryListener (zod)", () => {
 		const payload = {
 			type: "location_update",
 			data: {
+				id: "test-id",
 				lat: 35,
 				lon: 139,
 				accuracy: 5,
@@ -74,6 +75,7 @@ describe("registerTelemetryListener (zod)", () => {
 
 	it("fails validation with invalid location data", () => {
 		const invalidData = {
+			id: "test-id",
 			lat: "not a number",
 			lon: 139,
 			accuracy: 5,

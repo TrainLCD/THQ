@@ -1,5 +1,4 @@
 import type { LatLngTuple } from "leaflet";
-import uniqBy from "lodash/uniqBy";
 import { useMemo } from "react";
 import { CurrentLocationMap } from "./components/CurrentLocationMap";
 import { SpeedChart } from "./components/SpeedChart";
@@ -10,24 +9,19 @@ function App() {
 
 	const latestTelemetry = useMemo(() => telemetryList[0], [telemetryList]);
 
-	const uniqueTelemetryList = useMemo(
-		() => uniqBy(telemetryList, "timestamp"),
+	const telemetryLogs = useMemo(
+		() => telemetryList.slice().reverse(),
 		[telemetryList],
 	);
 
-	const telemetryLogs = useMemo(
-		() => uniqueTelemetryList.slice().reverse(),
-		[uniqueTelemetryList],
-	);
-
 	const locations = useMemo<LatLngTuple[]>(
-		() => uniqueTelemetryList.map((t) => [t.lat, t.lon]),
-		[uniqueTelemetryList],
+		() => telemetryList.map((t) => [t.lat, t.lon]),
+		[telemetryList],
 	);
 
 	const speedChartData = useMemo(
 		() =>
-			uniqueTelemetryList.flatMap((t) => {
+			telemetryList.flatMap((t) => {
 				const date = new Date(t.timestamp);
 				const hours = date.getHours();
 				const minutes = date.getMinutes();
@@ -44,7 +38,7 @@ function App() {
 					},
 				];
 			}),
-		[uniqueTelemetryList],
+		[telemetryList],
 	);
 
 	return (
@@ -98,7 +92,7 @@ function App() {
 							</thead>
 							<tbody>
 								{telemetryLogs.map((t) => (
-									<tr key={t.timestamp}>
+									<tr key={t.id}>
 										<td className="p-2 border border-gray-200">
 											{new Date(t.timestamp).toLocaleString()}
 										</td>
