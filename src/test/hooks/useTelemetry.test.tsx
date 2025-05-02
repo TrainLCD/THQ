@@ -1,10 +1,10 @@
 /**
  * @vitest-environment jsdom
  */
-import { renderHook, act } from "@testing-library/react";
-import { useTelemetry } from "../../hooks/useTelemetry";
-import { getDefaultStore, Provider } from "jotai";
+import { act, renderHook } from "@testing-library/react";
+import { Provider, createStore } from "jotai";
 import { vi } from "vitest";
+import { useTelemetry } from "../../hooks/useTelemetry";
 
 vi.mock("../../domain/commands", async () => {
 	return {
@@ -19,7 +19,7 @@ import {
 
 describe("useTelemetry", () => {
 	const createWrapper = () => {
-		const store = getDefaultStore();
+		const store = createStore();
 		return ({ children }: { children: React.ReactNode }) => (
 			<Provider store={store}>{children}</Provider>
 		);
@@ -63,9 +63,12 @@ describe("useTelemetry", () => {
 	});
 
 	it("sets error when onError is called", () => {
+		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
 		let errorHandler: ((err: any) => void) | undefined;
 
+		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
 		(registerTelemetryListener as any).mockImplementation(
+			// biome-ignore lint/suspicious/noExplicitAny: <explanation>
 			({ onError }: any) => {
 				errorHandler = onError;
 			},
@@ -87,8 +90,9 @@ describe("useTelemetry", () => {
 		});
 	});
 
-	it("truncates telemetry list to last 100 items", () => {
-		let locationHandler: ((data: LocationData) => void) | undefined;
+	it("truncates telemetry list to last 1,000 items", () => {
+		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
+		let locationHandler: ((data: any) => void) | undefined;
 
 		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
 		(registerTelemetryListener as any).mockImplementation(
@@ -103,19 +107,22 @@ describe("useTelemetry", () => {
 		});
 
 		act(() => {
-			for (let i = 0; i < 150; i++) {
+			for (let i = 0; i < 1050; i++) {
 				locationHandler?.({
-					lat: 35 + i,
+					lat: 35,
 					lon: 139,
 					accuracy: 5,
 					speed: 1,
 					gForce: 1,
-					timestamp: i,
+					timestamp: i, // ユニークな値で順序確認用
 				});
 			}
 		});
 
-		expect(result.current.telemetryList).toHaveLength(100);
-		expect(result.current.telemetryList[0].lat).toBe(85); // 最初の50件は落ちているはず
+		const list = result.current.telemetryList;
+
+		expect(list).toHaveLength(1000);
+		expect(list[0].timestamp).toBe(50); // 最古が先頭
+		expect(list[999].timestamp).toBe(1049); // 最新が最後尾
 	});
 });

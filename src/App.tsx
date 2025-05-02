@@ -1,31 +1,33 @@
-import { useTelemetry } from "./hooks/useTelemetry";
-import { CurrentLocationMap } from "./components/CurrentLocationMap";
-import { useMemo } from "react";
-import { SpeedChart } from "./components/SpeedChart";
-import uniqBy from "lodash/uniqBy";
 import type { LatLngTuple } from "leaflet";
+import uniqBy from "lodash/uniqBy";
+import { useMemo } from "react";
+import { CurrentLocationMap } from "./components/CurrentLocationMap";
+import { SpeedChart } from "./components/SpeedChart";
+import { useTelemetry } from "./hooks/useTelemetry";
 
 function App() {
 	const { telemetryList, error } = useTelemetry();
 
-	const latestTelemetry = useMemo(
-		() => telemetryList[telemetryList.length - 1],
-		[telemetryList],
-	);
+	const latestTelemetry = useMemo(() => telemetryList[0], [telemetryList]);
 
-	const telemetryLogs = useMemo(
+	const uniqueTelemetryList = useMemo(
 		() => uniqBy(telemetryList, "timestamp"),
 		[telemetryList],
 	);
 
+	const telemetryLogs = useMemo(
+		() => uniqueTelemetryList.slice().reverse(),
+		[uniqueTelemetryList],
+	);
+
 	const locations = useMemo<LatLngTuple[]>(
-		() => telemetryLogs.map((t) => [t.lat, t.lon]),
-		[telemetryLogs],
+		() => uniqueTelemetryList.map((t) => [t.lat, t.lon]),
+		[uniqueTelemetryList],
 	);
 
 	const speedChartData = useMemo(
 		() =>
-			telemetryLogs.flatMap((t) => {
+			uniqueTelemetryList.flatMap((t) => {
 				const date = new Date(t.timestamp);
 				const hours = date.getHours();
 				const minutes = date.getMinutes();
@@ -42,7 +44,7 @@ function App() {
 					},
 				];
 			}),
-		[telemetryLogs],
+		[uniqueTelemetryList],
 	);
 
 	return (
