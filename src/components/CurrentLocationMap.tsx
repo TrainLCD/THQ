@@ -1,8 +1,16 @@
+import type { LatLngTuple } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useEffect } from "react";
-import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
+import {
+	MapContainer,
+	Marker,
+	Polyline,
+	Popup,
+	TileLayer,
+	useMap,
+} from "react-leaflet";
 
-const MapFollower = ({ center }: { center: [number, number] }) => {
+const MapFollower = ({ center }: { center: LatLngTuple }) => {
 	const map = useMap();
 
 	useEffect(() => {
@@ -13,8 +21,10 @@ const MapFollower = ({ center }: { center: [number, number] }) => {
 };
 
 export const CurrentLocationMap = ({
-	location: [lat, lon],
-}: { location: [number, number] }) => {
+	locations,
+}: { locations: LatLngTuple[] }) => {
+	const [lat, lon] = locations[locations.length - 1];
+
 	return (
 		<MapContainer
 			center={[lat, lon]}
@@ -33,6 +43,7 @@ export const CurrentLocationMap = ({
 					{lat}, {lon}
 				</Popup>
 			</Marker>
+			<Polyline positions={locations} color="blue" />
 			<MapFollower center={[lat, lon]} />
 		</MapContainer>
 	);

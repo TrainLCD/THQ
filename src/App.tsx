@@ -3,6 +3,7 @@ import { CurrentLocationMap } from "./components/CurrentLocationMap";
 import { useMemo } from "react";
 import { SpeedChart } from "./components/SpeedChart";
 import uniqBy from "lodash/uniqBy";
+import type { LatLngTuple } from "leaflet";
 
 function App() {
 	const { telemetryList, error } = useTelemetry();
@@ -17,7 +18,7 @@ function App() {
 		[telemetryList],
 	);
 
-	const locations = useMemo(
+	const locations = useMemo<LatLngTuple[]>(
 		() => telemetryLogs.map((t) => [t.lat, t.lon]),
 		[telemetryLogs],
 	);
