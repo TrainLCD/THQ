@@ -1,20 +1,33 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
 	type ErrorData,
 	type LocationData,
 	registerTelemetryListener,
 } from "../domain/commands";
+import { useAtom } from "jotai";
+import { telemetryListAtom } from "../atoms/telemetryItem";
 
 export const useTelemetry = () => {
-	const [location, setLocation] = useState<LocationData | null>(null);
 	const [error, setError] = useState<ErrorData | null>(null);
+
+	const [telemetryList, setTelemetryList] = useAtom(telemetryListAtom);
+
+	const handleLocationUpdate = useCallback(
+		(data: LocationData) => {
+			setTelemetryList((prev) => [
+				...prev.slice(-99), // 最大100件まで保持
+				{ ...data },
+			]);
+		},
+		[setTelemetryList],
+	);
 
 	useEffect(() => {
 		registerTelemetryListener({
-			onLocationUpdate: setLocation,
+			onLocationUpdate: handleLocationUpdate,
 			onError: setError,
 		});
-	}, []);
+	}, [handleLocationUpdate]);
 
-	return { location, error };
+	return { telemetryList, error };
 };
