@@ -6,6 +6,7 @@ import {
 } from "../domain/commands";
 import { useAtom } from "jotai";
 import { telemetryListAtom } from "../atoms/telemetryItem";
+import uniqBy from "lodash/uniqBy";
 
 export const useTelemetry = () => {
 	const [error, setError] = useState<ErrorData | null>(null);
@@ -29,5 +30,5 @@ export const useTelemetry = () => {
 		});
 	}, [handleLocationUpdate]);
 
-	return { telemetryList, error };
+	return { telemetryList: uniqBy(telemetryList, "id"), error };
 };
