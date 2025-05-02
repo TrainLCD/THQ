@@ -15,10 +15,15 @@ export const useTelemetry = () => {
 
 	const handleLocationUpdate = useCallback(
 		(data: LocationData) => {
-			setTelemetryList((prev) => [
-				...prev.slice(-999), // 最大1,000件まで保持
-				{ ...data },
-			]);
+			setTelemetryList((prev) =>
+				uniqBy(
+					[
+						...prev.slice(-999), // 最大1,000件まで保持
+						{ ...data },
+					],
+					"id",
+				),
+			);
 		},
 		[setTelemetryList],
 	);
@@ -30,5 +35,5 @@ export const useTelemetry = () => {
 		});
 	}, [handleLocationUpdate]);
 
-	return { telemetryList: uniqBy(telemetryList, "id"), error };
+	return { telemetryList, error };
 };
