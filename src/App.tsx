@@ -114,13 +114,13 @@ function App() {
 										<td className="p-2 border border-gray-200">
 											{t.gForce.toFixed(3)}
 										</td>
-										{t.accuracy > 100 ? (
+										{(t?.accuracy ?? 0) > 100 ? (
 											<td className="p-2 border border-gray-200 text-red-600 font-bold">
-												{t.accuracy.toFixed(2)}
+												{t.accuracy?.toFixed(2)}
 											</td>
 										) : (
 											<td className="p-2 border border-gray-200">
-												{t.accuracy.toFixed(2)}
+												{t.accuracy?.toFixed(2)}
 											</td>
 										)}
 									</tr>

@@ -8,7 +8,7 @@ export type TelemetryEvent =
 export const LocationData = z.object({
 	lat: z.number(),
 	lon: z.number(),
-	accuracy: z.number(),
+	accuracy: z.number().nullable(),
 	speed: z.number(),
 	gForce: z.number(),
 	timestamp: z.number(),
