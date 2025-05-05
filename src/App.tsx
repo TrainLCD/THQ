@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { CurrentLocationMap } from "./components/CurrentLocationMap";
 import { SpeedChart } from "./components/SpeedChart";
 import { useTelemetry } from "./hooks/useTelemetry";
+import { toKMH } from "./utils/unit";
 
 const STATE_ICONS = {
 	arrived: "🚉",
@@ -22,7 +23,14 @@ function App() {
 	);
 
 	const locations = useMemo<LatLngTuple[]>(
-		() => telemetryList.map((t) => [t.lat, t.lon]),
+		() =>
+			telemetryList
+				.map((t) =>
+					t.lat !== null && t.lon !== null
+						? ([t.lat, t.lon] as LatLngTuple)
+						: undefined,
+				)
+				.filter((t) => t !== undefined),
 		[telemetryList],
 	);
 
@@ -30,17 +38,12 @@ function App() {
 		() =>
 			telemetryList.flatMap((t) => {
 				const date = new Date(t.timestamp);
-				const hours = date.getHours();
-				const minutes = date.getMinutes();
-				const seconds = date.getSeconds();
-				const formattedTime = `${hours}:${minutes}:${seconds}`;
-
 				return [
 					{
 						name: date.toLocaleString(),
-						timestamp: formattedTime,
-						accuracy: t.accuracy,
-						speed: t.speed,
+						label: STATE_ICONS[t.state],
+						accuracy: t.accuracy?.toFixed(2),
+						speed: toKMH(t.speed ?? 0).toFixed(2),
 					},
 				];
 			}),
@@ -91,8 +94,8 @@ function App() {
 									<th className="p-2 border border-gray-200 w-16">state</th>
 									<th className="p-2 border border-gray-200">timestamp</th>
 									<th className="p-2 border border-gray-200">coordinates</th>
-									<th className="p-2 border border-gray-200">speed(m/s)</th>
-									<th className="p-2 border border-gray-200">accuracy(m)</th>
+									<th className="p-2 border border-gray-200">speed</th>
+									<th className="p-2 border border-gray-200">accuracy</th>
 									<th className="p-2 border border-gray-200">device</th>
 								</tr>
 							</thead>
@@ -106,18 +109,20 @@ function App() {
 											{new Date(t.timestamp).toLocaleString()}
 										</td>
 										<td className="p-2 border border-gray-200">
-											{t.lon.toFixed(5)}, {t.lat.toFixed(5)}
+											{t.lon?.toFixed(5)}, {t.lat?.toFixed(5)}
 										</td>
 										<td className="p-2 border border-gray-200">
-											{t.speed.toFixed(2)}
+											{(t.speed ?? 0)?.toFixed(2)}m/s (
+											{toKMH(t.speed ?? 0).toFixed(2)}
+											km/h)
 										</td>
 										{(t?.accuracy ?? 0) > 100 ? (
 											<td className="p-2 border border-gray-200 text-red-600 font-bold">
-												{t.accuracy?.toFixed(2)}
+												{t.accuracy?.toFixed(2)}m
 											</td>
 										) : (
 											<td className="p-2 border border-gray-200">
-												{t.accuracy?.toFixed(2)}
+												{t.accuracy?.toFixed(2)}m
 											</td>
 										)}
 										<td className="p-2 border border-gray-200">{t.device}</td>

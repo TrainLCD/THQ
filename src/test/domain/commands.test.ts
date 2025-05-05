@@ -3,7 +3,7 @@ import {
 	ErrorData,
 	LocationData,
 	registerTelemetryListener,
-} from "../../domain/commands";
+} from "~/domain/commands";
 
 vi.mock("@tauri-apps/api/event", () => ({
 	listen: vi.fn(),
@@ -33,6 +33,8 @@ describe("registerTelemetryListener (zod)", () => {
 				accuracy: 5,
 				speed: 10,
 				timestamp: 1000,
+				state: "arrived",
+				device: "test-device",
 			},
 		};
 

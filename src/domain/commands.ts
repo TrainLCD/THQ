@@ -1,10 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { z } from "zod";
 
-export type TelemetryEvent =
-	| { type: "location_update"; data: LocationData }
-	| { type: "error"; data: ErrorData };
-
 export const MovingState = z.enum([
 	"arrived",
 	"approaching",
@@ -15,10 +11,10 @@ export type MovingState = z.infer<typeof MovingState>;
 
 export const LocationData = z.object({
 	id: z.string(),
-	lat: z.number(),
-	lon: z.number(),
+	lat: z.number().nullable(),
+	lon: z.number().nullable(),
 	accuracy: z.number().nullable(),
-	speed: z.number(),
+	speed: z.number().nullable(),
 	timestamp: z.number(),
 	state: MovingState,
 	device: z.string(),
@@ -31,6 +27,18 @@ export const ErrorData = z.object({
 	raw: z.any(),
 });
 export type ErrorData = z.infer<typeof ErrorData>;
+
+export const TelemetryEvent = z.discriminatedUnion("type", [
+	z.object({
+		type: z.literal("location_update"),
+		data: LocationData,
+	}),
+	z.object({
+		type: z.literal("error"),
+		data: ErrorData,
+	}),
+]);
+export type TelemetryEvent = z.infer<typeof TelemetryEvent>;
 
 export function registerTelemetryListener(handlers: {
 	onLocationUpdate?: (data: LocationData) => void;

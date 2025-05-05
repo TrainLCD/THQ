@@ -4,32 +4,30 @@
 import { act, renderHook } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import { vi } from "vitest";
-import { useTelemetry } from "../../hooks/useTelemetry";
+import { LocationData, registerTelemetryListener } from "~/domain/commands";
+import { useTelemetry } from "~/hooks/useTelemetry";
 
-vi.mock("../../domain/commands", async () => {
+vi.mock(import("~/domain/commands"), async (importOriginal) => {
+	const mod = await importOriginal();
 	return {
+		LocationData: mod.LocationData,
 		registerTelemetryListener: vi.fn(),
 	};
 });
 
-import {
-	type LocationData,
-	registerTelemetryListener,
-} from "../../domain/commands";
+const createWrapper = () => {
+	const store = createStore();
+	return ({ children }: { children: React.ReactNode }) => (
+		<Provider store={store}>{children}</Provider>
+	);
+};
 
-describe("useTelemetry", () => {
-	const createWrapper = () => {
-		const store = createStore();
-		return ({ children }: { children: React.ReactNode }) => (
-			<Provider store={store}>{children}</Provider>
-		);
-	};
-
+describe("useTelemetry (uniq + max 1000件)", () => {
 	beforeEach(() => {
 		vi.resetAllMocks();
 	});
 
-	it("adds location data to telemetryList", () => {
+	it("adds unique location data and removes duplicates", () => {
 		let locationHandler: ((data: LocationData) => void) | undefined;
 
 		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
@@ -44,22 +42,73 @@ describe("useTelemetry", () => {
 			wrapper: createWrapper(),
 		});
 
-		act(() => {
-			locationHandler?.({
-				id: "test-id",
-				lat: 35,
-				lon: 139,
-				accuracy: 5,
-				speed: 1.2,
-				timestamp: 1234567890,
-			});
-		});
-
-		expect(result.current.telemetryList).toHaveLength(1);
-		expect(result.current.telemetryList[0]).toMatchObject({
+		const sample = LocationData.safeParse({
+			id: "loc-1",
 			lat: 35,
 			lon: 139,
+			accuracy: 5,
+			speed: 1,
+			timestamp: 1000,
+			state: "arrived",
+			device: "test-device",
 		});
+		1;
+		expect(sample.success).toBe(true);
+		expect(sample.data).toBeDefined();
+
+		act(() => {
+			if (sample.data) {
+				locationHandler?.(sample.data);
+				locationHandler?.({ ...sample.data }); // 重複データ
+			}
+		});
+
+		expect(result.current.telemetryList).toHaveLength(1); // 重複除外
+		expect(result.current.telemetryList[0].id).toBe("loc-1");
+	});
+
+	it("maintains at most 1000 unique telemetry items", () => {
+		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
+		let locationHandler: ((data: any) => void) | undefined;
+
+		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
+		(registerTelemetryListener as any).mockImplementation(
+			// biome-ignore lint/suspicious/noExplicitAny: <explanation>
+			({ onLocationUpdate }: { onLocationUpdate: any }) => {
+				locationHandler = onLocationUpdate;
+			},
+		);
+
+		const { result } = renderHook(() => useTelemetry(), {
+			wrapper: createWrapper(),
+		});
+
+		act(() => {
+			for (let i = 0; i < 1050; i++) {
+				const sample = LocationData.safeParse({
+					id: `loc-${i}`,
+					lat: 35,
+					lon: 139,
+					accuracy: 5,
+					speed: 1,
+					timestamp: i,
+					state: "arrived",
+					device: "test-device",
+				});
+				expect(sample.success).toBe(true);
+				expect(sample.data).toBeDefined();
+
+				if (sample.data) {
+					locationHandler?.(sample.data);
+				}
+			}
+		});
+
+		const list = result.current.telemetryList;
+
+		expect(list).toHaveLength(1000);
+		expect(list[0].id).toBe("loc-50"); // 最初の50件は落ちる
+		expect(list[999].id).toBe("loc-1049"); // 最新が末尾に
 	});
 
 	it("sets error when onError is called", () => {
@@ -69,7 +118,7 @@ describe("useTelemetry", () => {
 		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
 		(registerTelemetryListener as any).mockImplementation(
 			// biome-ignore lint/suspicious/noExplicitAny: <explanation>
-			({ onError }: any) => {
+			({ onError }: { onError: any }) => {
 				errorHandler = onError;
 			},
 		);
@@ -85,44 +134,6 @@ describe("useTelemetry", () => {
 			});
 		});
 
-		expect(result.current.error).toMatchObject({
-			type: "accuracy_low",
-		});
-	});
-
-	it("truncates telemetry list to last 1,000 items", () => {
-		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
-		let locationHandler: ((data: any) => void) | undefined;
-
-		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
-		(registerTelemetryListener as any).mockImplementation(
-			// biome-ignore lint/suspicious/noExplicitAny: <explanation>
-			({ onLocationUpdate }: any) => {
-				locationHandler = onLocationUpdate;
-			},
-		);
-
-		const { result } = renderHook(() => useTelemetry(), {
-			wrapper: createWrapper(),
-		});
-
-		act(() => {
-			for (let i = 0; i < 1050; i++) {
-				locationHandler?.({
-					id: "test-id",
-					lat: 35,
-					lon: 139,
-					accuracy: 5,
-					speed: 1,
-					timestamp: i, // ユニークな値で順序確認用
-				});
-			}
-		});
-
-		const list = result.current.telemetryList;
-
-		expect(list).toHaveLength(1000);
-		expect(list[0].timestamp).toBe(50); // 最古が先頭
-		expect(list[999].timestamp).toBe(1049); // 最新が最後尾
+		expect(result.current.error?.type).toBe("accuracy_low");
 	});
 });
