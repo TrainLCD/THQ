@@ -95,7 +95,7 @@ function App() {
 					{movingLogs.length ? (
 						<MovingLogTable movingLogs={movingLogs} />
 					) : (
-						<p className="text-gray-500">No log data available.</p>
+						<p className="text-gray-500">No moving log data available.</p>
 					)}
 				</div>
 			</section>
