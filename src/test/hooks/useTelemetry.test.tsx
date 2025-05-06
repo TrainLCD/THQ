@@ -84,7 +84,7 @@ describe("useTelemetry (uniq + max 1000件)", () => {
 		});
 
 		act(() => {
-			for (let i = 0; i < 1050; i++) {
+			for (let i = 0; i < 10050; i++) {
 				const sample = LocationData.safeParse({
 					id: `loc-${i}`,
 					lat: 35,
@@ -106,9 +106,9 @@ describe("useTelemetry (uniq + max 1000件)", () => {
 
 		const list = result.current.telemetryList;
 
-		expect(list).toHaveLength(1000);
+		expect(list).toHaveLength(10000);
 		expect(list[0].id).toBe("loc-50"); // 最初の50件は落ちる
-		expect(list[999].id).toBe("loc-1049"); // 最新が末尾に
+		expect(list[9999].id).toBe("loc-10049"); // 最新が末尾に
 	});
 
 	it("sets error when onError is called", () => {

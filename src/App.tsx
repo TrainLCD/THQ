@@ -1,23 +1,19 @@
 import type { LatLngTuple } from "leaflet";
 import { useMemo } from "react";
+import { ConsoleLogTable } from "./components/ConsoleLogTable";
 import { CurrentLocationMap } from "./components/CurrentLocationMap";
+import { MovingLogTable } from "./components/MovingLogTable";
 import { SpeedChart } from "./components/SpeedChart";
+import { STATE_ICONS } from "./domain/emoji";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { toKMH } from "./utils/unit";
 
-const STATE_ICONS = {
-	arrived: "🚉",
-	approaching: "🔜",
-	passing: "⏩",
-	moving: "▶️",
-} as const;
-
 function App() {
-	const { telemetryList, error } = useTelemetry();
+	const { telemetryList, error, consoleLogs } = useTelemetry();
 
 	const latestTelemetry = useMemo(() => telemetryList[0], [telemetryList]);
 
-	const telemetryLogs = useMemo(
+	const movingLogs = useMemo(
 		() => telemetryList.slice().reverse(),
 		[telemetryList],
 	);
@@ -74,6 +70,15 @@ function App() {
 				)}
 
 				<div className="mt-4">
+					<h3 className="text-md font-semibold">Logs</h3>
+					{consoleLogs.length ? (
+						<ConsoleLogTable logs={consoleLogs} />
+					) : (
+						<p className="text-gray-500">No log data available.</p>
+					)}
+				</div>
+
+				<div className="mt-4">
 					<h3 className="text-md font-semibold">Error</h3>
 					{error ? (
 						<div className="mt-2">
@@ -86,51 +91,12 @@ function App() {
 				</div>
 
 				<div className="mt-4">
-					<h3 className="text-md font-semibold">Logs</h3>
-					<div className="mt-2">
-						<table className="bg-white w-full border-spacing-2 border border-gray-200 rounded-md">
-							<thead>
-								<tr>
-									<th className="p-2 border border-gray-200 w-16">state</th>
-									<th className="p-2 border border-gray-200">timestamp</th>
-									<th className="p-2 border border-gray-200">coordinates</th>
-									<th className="p-2 border border-gray-200">speed</th>
-									<th className="p-2 border border-gray-200">accuracy</th>
-									<th className="p-2 border border-gray-200">device</th>
-								</tr>
-							</thead>
-							<tbody>
-								{telemetryLogs.map((t) => (
-									<tr key={t.id}>
-										<td className="p-2 border border-gray-200 w-16 text-center">
-											{STATE_ICONS[t.state]}
-										</td>
-										<td className="p-2 border border-gray-200">
-											{new Date(t.timestamp).toLocaleString()}
-										</td>
-										<td className="p-2 border border-gray-200">
-											{t.lon?.toFixed(5)}, {t.lat?.toFixed(5)}
-										</td>
-										<td className="p-2 border border-gray-200">
-											{(t.speed ?? 0)?.toFixed(2)}m/s (
-											{toKMH(t.speed ?? 0).toFixed(2)}
-											km/h)
-										</td>
-										{(t?.accuracy ?? 0) > 100 ? (
-											<td className="p-2 border border-gray-200 text-red-600 font-bold">
-												{t.accuracy?.toFixed(2)}m
-											</td>
-										) : (
-											<td className="p-2 border border-gray-200">
-												{t.accuracy?.toFixed(2)}m
-											</td>
-										)}
-										<td className="p-2 border border-gray-200">{t.device}</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
+					<h3 className="text-md font-semibold">Moving Log</h3>
+					{movingLogs.length ? (
+						<MovingLogTable movingLogs={movingLogs} />
+					) : (
+						<p className="text-gray-500">No log data available.</p>
+					)}
 				</div>
 			</section>
 		</main>

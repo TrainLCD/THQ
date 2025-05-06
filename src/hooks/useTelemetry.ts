@@ -5,11 +5,13 @@ import { telemetryListAtom } from "~/atoms/telemetryItem";
 import {
 	type ErrorData,
 	type LocationData,
+	type LogData,
 	registerTelemetryListener,
 } from "~/domain/commands";
 
 export const useTelemetry = () => {
 	const [error, setError] = useState<ErrorData | null>(null);
+	const [consoleLogs, setConsoleLogs] = useState<LogData[]>([]);
 
 	const [telemetryList, setTelemetryList] = useAtom(telemetryListAtom);
 
@@ -18,7 +20,7 @@ export const useTelemetry = () => {
 			setTelemetryList((prev) =>
 				uniqBy(
 					[
-						...prev.slice(-999), // 最大1,000件まで保持
+						...prev.slice(-9999), // 最大10,000件まで保持
 						{ ...data },
 					],
 					"id",
@@ -32,8 +34,11 @@ export const useTelemetry = () => {
 		registerTelemetryListener({
 			onLocationUpdate: handleLocationUpdate,
 			onError: setError,
+			onLog: (log) => {
+				setConsoleLogs((prev) => uniqBy([...prev, log], "id"));
+			},
 		});
 	}, [handleLocationUpdate]);
 
-	return { telemetryList, error };
+	return { telemetryList, error, consoleLogs };
 };

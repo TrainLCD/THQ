@@ -8,10 +8,18 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 #[derive(Deserialize)]
 pub struct RawTelemetryPayload {
-    pub coords: RawCoords,
+    r#type: String,
+    pub coords: Option<RawCoords>,
+    pub log: Option<RawLogPayload>,
+    pub state: Option<String>,
     pub device: String,
-    pub state: String,
     pub timestamp: u64,
+}
+
+#[derive(Deserialize)]
+pub struct RawLogPayload {
+    level: String,
+    message: String,
 }
 
 #[derive(Deserialize)]
@@ -29,6 +37,8 @@ pub enum TelemetryEvent {
     LocationUpdate(LocationData),
     #[serde(rename = "error")]
     Error(ErrorData),
+    #[serde(rename = "log")]
+    LogUpdate(LogData),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,6 +59,15 @@ pub struct ErrorData {
     raw: serde_json::Value,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LogData {
+    id: String,
+    timestamp: u64,
+    level: String,
+    message: String,
+    device: String,
+}
+
 pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
     let app = Arc::clone(&app);
 
@@ -65,16 +84,40 @@ pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
                     if let Message::Text(txt) = msg {
                         match serde_json::from_str::<RawTelemetryPayload>(&txt) {
                             Ok(payload) => {
-                                let event = TelemetryEvent::LocationUpdate(LocationData {
-                                    id: nanoid::nanoid!(),
-                                    lat: payload.coords.latitude,
-                                    lon: payload.coords.longitude,
-                                    accuracy: payload.coords.accuracy,
-                                    speed: payload.coords.speed,
-                                    device: payload.device,
-                                    state: payload.state,
-                                    timestamp: payload.timestamp,
-                                });
+                                let event = match payload.r#type.as_str() {
+                                    "location_update" => {
+                                        let coords =
+                                            payload.coords.expect("coords should be present");
+                                        TelemetryEvent::LocationUpdate(LocationData {
+                                            id: nanoid::nanoid!(),
+                                            lat: coords.latitude,
+                                            lon: coords.longitude,
+                                            accuracy: coords.accuracy,
+                                            speed: coords.speed,
+                                            device: payload.device,
+                                            state: payload.state.unwrap_or("unknown".to_string()),
+                                            timestamp: payload.timestamp,
+                                        })
+                                    }
+                                    "log" => {
+                                        let log = payload.log.expect("log should be present");
+                                        TelemetryEvent::LogUpdate(LogData {
+                                            id: nanoid::nanoid!(),
+                                            timestamp: payload.timestamp,
+                                            level: log.level,
+                                            message: log.message,
+                                            device: payload.device,
+                                        })
+                                    }
+                                    _ => TelemetryEvent::Error(ErrorData {
+                                        r#type: "unknown".to_string(),
+                                        raw: serde_json::json!({
+                                            "error": "Unknown event type",
+                                            "raw": txt.to_string(),
+                                        }),
+                                    }),
+                                };
+
                                 if let Some(window) = app.get_webview_window("main") {
                                     let _ = window.emit("telemetry", &event);
                                 }

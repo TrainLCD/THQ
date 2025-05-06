@@ -28,6 +28,15 @@ export const ErrorData = z.object({
 });
 export type ErrorData = z.infer<typeof ErrorData>;
 
+export const LogData = z.object({
+	id: z.string(),
+	timestamp: z.number(),
+	level: z.enum(["debug", "info", "warn", "error"]),
+	message: z.string(),
+	device: z.string(),
+});
+export type LogData = z.infer<typeof LogData>;
+
 export const TelemetryEvent = z.discriminatedUnion("type", [
 	z.object({
 		type: z.literal("location_update"),
@@ -37,23 +46,52 @@ export const TelemetryEvent = z.discriminatedUnion("type", [
 		type: z.literal("error"),
 		data: ErrorData,
 	}),
+	z.object({
+		type: z.literal("log"),
+		data: LogData,
+	}),
 ]);
 export type TelemetryEvent = z.infer<typeof TelemetryEvent>;
 
 export function registerTelemetryListener(handlers: {
 	onLocationUpdate?: (data: LocationData) => void;
 	onError?: (error: ErrorData) => void;
+	onLog?: (log: LogData) => void;
 }) {
 	listen<TelemetryEvent>("telemetry", (event) => {
 		const payload = event.payload;
 
 		switch (payload.type) {
-			case "location_update":
-				handlers.onLocationUpdate?.(payload.data);
+			case "location_update": {
+				const parsed = LocationData.safeParse(payload.data);
+				if (parsed.success) {
+					handlers.onLocationUpdate?.(parsed.data);
+				} else {
+					console.error("Invalid location data", parsed.error);
+					handlers.onError?.({
+						type: "unknown",
+						raw: parsed.error,
+					});
+				}
 				break;
+			}
 			case "error":
 				handlers.onError?.(payload.data);
 				break;
+			case "log": {
+				const parsed = LogData.safeParse(payload.data);
+				console.log(parsed);
+				if (parsed.success) {
+					handlers.onLog?.(parsed.data);
+				} else {
+					console.error("Invalid log data", parsed.error);
+					handlers.onError?.({
+						type: "unknown",
+						raw: parsed.error,
+					});
+				}
+				break;
+			}
 		}
 	});
 }
