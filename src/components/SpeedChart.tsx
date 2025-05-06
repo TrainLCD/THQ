@@ -26,11 +26,11 @@ export const SpeedChart = ({ data }: { data: SpeedChartData[] }) => (
 			<XAxis dataKey="label" />
 
 			{/* Primary axis for speed */}
-			<YAxis yAxisId="left" domain={[0, 150]}>
+			<YAxis yAxisId="left" domain={[0, 130]}>
 				<Label value="Speed (km/h)" offset={10} position="top" />
 			</YAxis>
 			{/* Secondary axis for accuracy */}
-			<YAxis yAxisId="right" orientation="right" domain={[0, 120]}>
+			<YAxis yAxisId="right" orientation="right" domain={[0, 100]}>
 				<Label value="Accuracy (m)" offset={10} position="top" />
 			</YAxis>
 
