@@ -68,9 +68,60 @@ pub struct LogData {
     device: String,
 }
 
+fn handle_location_update(payload: RawTelemetryPayload) -> TelemetryEvent {
+    let coords = payload.coords.expect("coords should be present");
+    TelemetryEvent::LocationUpdate(LocationData {
+        id: nanoid::nanoid!(),
+        lat: coords.latitude,
+        lon: coords.longitude,
+        accuracy: coords.accuracy,
+        speed: coords.speed,
+        device: payload.device,
+        state: payload.state.unwrap_or("unknown".to_string()),
+        timestamp: payload.timestamp,
+    })
+}
+
+fn handle_log_update(payload: RawTelemetryPayload) -> TelemetryEvent {
+    let log = payload.log.expect("log should be present");
+    TelemetryEvent::LogUpdate(LogData {
+        id: nanoid::nanoid!(),
+        timestamp: payload.timestamp,
+        level: log.level,
+        message: log.message,
+        device: payload.device,
+    })
+}
+
+fn handle_unknown_event(txt: &str) -> TelemetryEvent {
+    TelemetryEvent::Error(ErrorData {
+        r#type: "unknown".to_string(),
+        raw: serde_json::json!({
+            "error": "Unknown event type",
+            "raw": txt.to_string(),
+        }),
+    })
+}
+
+fn emit_event(app: &AppHandle, event: &TelemetryEvent) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("telemetry", event);
+    }
+}
+
+fn handle_error(app: &AppHandle, err: &serde_json::Error, txt: &str) {
+    let error_event = TelemetryEvent::Error(ErrorData {
+        r#type: "unknown".to_string(),
+        raw: serde_json::json!({
+            "error": err.to_string(),
+            "raw": txt.to_string(),
+        }),
+    });
+    emit_event(app, &error_event);
+}
+
 pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
     let app = Arc::clone(&app);
-
     let listener = TcpListener::bind("0.0.0.0:8080").await?;
 
     tokio::spawn(async move {
@@ -85,55 +136,13 @@ pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
                         match serde_json::from_str::<RawTelemetryPayload>(&txt) {
                             Ok(payload) => {
                                 let event = match payload.r#type.as_str() {
-                                    "location_update" => {
-                                        let coords =
-                                            payload.coords.expect("coords should be present");
-                                        TelemetryEvent::LocationUpdate(LocationData {
-                                            id: nanoid::nanoid!(),
-                                            lat: coords.latitude,
-                                            lon: coords.longitude,
-                                            accuracy: coords.accuracy,
-                                            speed: coords.speed,
-                                            device: payload.device,
-                                            state: payload.state.unwrap_or("unknown".to_string()),
-                                            timestamp: payload.timestamp,
-                                        })
-                                    }
-                                    "log" => {
-                                        let log = payload.log.expect("log should be present");
-                                        TelemetryEvent::LogUpdate(LogData {
-                                            id: nanoid::nanoid!(),
-                                            timestamp: payload.timestamp,
-                                            level: log.level,
-                                            message: log.message,
-                                            device: payload.device,
-                                        })
-                                    }
-                                    _ => TelemetryEvent::Error(ErrorData {
-                                        r#type: "unknown".to_string(),
-                                        raw: serde_json::json!({
-                                            "error": "Unknown event type",
-                                            "raw": txt.to_string(),
-                                        }),
-                                    }),
+                                    "location_update" => handle_location_update(payload),
+                                    "log" => handle_log_update(payload),
+                                    _ => handle_unknown_event(&txt),
                                 };
-
-                                if let Some(window) = app.get_webview_window("main") {
-                                    let _ = window.emit("telemetry", &event);
-                                }
+                                emit_event(&app, &event);
                             }
-                            Err(err) => {
-                                let error_event = TelemetryEvent::Error(ErrorData {
-                                    r#type: "unknown".to_string(),
-                                    raw: serde_json::json!({
-                                      "error": err.to_string(),
-                                      "raw": txt.to_string(),
-                                    }),
-                                });
-                                if let Some(window) = app.get_webview_window("main") {
-                                    let _ = window.emit("telemetry", &error_event);
-                                }
-                            }
+                            Err(err) => handle_error(&app, &err, &txt),
                         }
                     }
                 }

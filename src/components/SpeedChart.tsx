@@ -1,3 +1,4 @@
+import { memo } from "react";
 import {
 	CartesianGrid,
 	Label,
@@ -13,7 +14,7 @@ import {
 
 type SpeedChartData = { name: string; speed: string };
 
-export const SpeedChart = ({ data }: { data: SpeedChartData[] }) => (
+export const SpeedChart = memo(({ data }: { data: SpeedChartData[] }) => (
 	<ResponsiveContainer width="100%" height="100%">
 		<LineChart
 			data={data.slice(-10)}
@@ -59,4 +60,4 @@ export const SpeedChart = ({ data }: { data: SpeedChartData[] }) => (
 			/>
 		</LineChart>
 	</ResponsiveContainer>
-);
+));

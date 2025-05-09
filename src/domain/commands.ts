@@ -80,7 +80,6 @@ export function registerTelemetryListener(handlers: {
 				break;
 			case "log": {
 				const parsed = LogData.safeParse(payload.data);
-				console.log(parsed);
 				if (parsed.success) {
 					handlers.onLog?.(parsed.data);
 				} else {

@@ -1,5 +1,5 @@
 import type { LatLngTuple } from "leaflet";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { ConsoleLogTable } from "./components/ConsoleLogTable";
 import { CurrentLocationMap } from "./components/CurrentLocationMap";
 import { MovingLogTable } from "./components/MovingLogTable";
@@ -7,15 +7,49 @@ import { SpeedChart } from "./components/SpeedChart";
 import { STATE_ICONS } from "./domain/emoji";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { toKMH } from "./utils/unit";
+import getRhumbLineBearing from "geolib/es/getRhumbLineBearing";
+import type { LocationData } from "./domain/commands";
+import { BAD_ACCURACY_THRESHOLD } from "./domain/threshold";
 
 function App() {
 	const { telemetryList, error, consoleLogs } = useTelemetry();
 
-	const latestTelemetry = useMemo(() => telemetryList[0], [telemetryList]);
+	const latestTelemetry = useMemo(
+		() => telemetryList[telemetryList.length - 1],
+		[telemetryList],
+	);
+	const latestTelemetryBearing = useMemo(() => {
+		const latest: LocationData | undefined =
+			telemetryList[telemetryList.length - 1];
+		const prev: LocationData | undefined =
+			telemetryList[telemetryList.length - 2];
+		if (!latest?.lat || !latest?.lon || !prev?.lat || !prev?.lon) return 0;
+		return getRhumbLineBearing(
+			{
+				latitude: latest.lat,
+				longitude: latest.lon,
+			},
+			{
+				latitude: prev.lat,
+				longitude: prev.lon,
+			},
+		);
+	}, [telemetryList]);
+
+	const badAccuracy = useMemo(() => {
+		if (latestTelemetry?.accuracy === null) return false;
+		if (latestTelemetry?.accuracy > BAD_ACCURACY_THRESHOLD) return true;
+		return false;
+	}, [latestTelemetry?.accuracy]);
 
 	const movingLogs = useMemo(
-		() => telemetryList.slice().reverse(),
+		() => telemetryList.slice().sort((a, b) => b.timestamp - a.timestamp),
 		[telemetryList],
+	);
+
+	const sortedConsoleLogs = useMemo(
+		() => consoleLogs.slice().sort((a, b) => b.timestamp - a.timestamp),
+		[consoleLogs],
 	);
 
 	const locations = useMemo<LatLngTuple[]>(
@@ -53,11 +87,17 @@ function App() {
 			</header>
 
 			<section className="px-4 pb-4 mt-4">
-				<h3 className="text-md font-semibold">Visualize</h3>
+				<h3 className="text-md font-semibold mb-2">Visualize</h3>
 				{latestTelemetry ? (
 					<div className="mt-2 flex gap-4">
 						<div className="h-96 w-1/2">
-							<CurrentLocationMap locations={locations} />
+							<CurrentLocationMap
+								locations={locations}
+								state={latestTelemetry.state}
+								bearing={latestTelemetryBearing}
+								badAccuracy={badAccuracy}
+								device={latestTelemetry.device}
+							/>
 						</div>
 						<div className="h-96 w-1/2">
 							<SpeedChart data={speedChartData} />
@@ -70,16 +110,16 @@ function App() {
 				)}
 
 				<div className="mt-4">
-					<h3 className="text-md font-semibold">Logs</h3>
-					{consoleLogs.length ? (
-						<ConsoleLogTable logs={consoleLogs} />
+					<h3 className="text-md font-semibold mb-2">Moving Log</h3>
+					{movingLogs.length ? (
+						<MovingLogTable movingLogs={movingLogs} />
 					) : (
-						<p className="text-gray-500">No log data available.</p>
+						<p className="text-gray-500">No moving log data available.</p>
 					)}
 				</div>
 
 				<div className="mt-4">
-					<h3 className="text-md font-semibold">Error</h3>
+					<h3 className="text-md font-semibold mb-2">Error</h3>
 					{error ? (
 						<div className="mt-2">
 							<p>Error Type: {error.type}</p>
@@ -91,11 +131,11 @@ function App() {
 				</div>
 
 				<div className="mt-4">
-					<h3 className="text-md font-semibold">Moving Log</h3>
-					{movingLogs.length ? (
-						<MovingLogTable movingLogs={movingLogs} />
+					<h3 className="text-md font-semibold mb-2">Logs</h3>
+					{sortedConsoleLogs.length ? (
+						<ConsoleLogTable logs={sortedConsoleLogs} />
 					) : (
-						<p className="text-gray-500">No moving log data available.</p>
+						<p className="text-gray-500">No log data available.</p>
 					)}
 				</div>
 			</section>
@@ -103,4 +143,4 @@ function App() {
 	);
 }
 
-export default App;
+export default memo(App);

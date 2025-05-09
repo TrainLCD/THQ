@@ -1,9 +1,10 @@
+import { memo } from "react";
 import type { LogData } from "~/domain/commands";
 import { LOG_LEVEL_ICONS } from "~/domain/emoji";
 
-export const ConsoleLogTable = ({ logs }: { logs: LogData[] }) => {
+export const ConsoleLogTable = memo(({ logs }: { logs: LogData[] }) => {
 	return (
-		<div className="overflow-auto h-96 overscroll-none">
+		<div className="overflow-auto max-h-96 overscroll-none">
 			<table className="bg-white w-full border-spacing-2 border border-gray-200 rounded-md">
 				<thead className="sticky top-0 bg-white border-b-1 borer-b-gray-200">
 					<tr>
@@ -30,4 +31,4 @@ export const ConsoleLogTable = ({ logs }: { logs: LogData[] }) => {
 			</table>
 		</div>
 	);
-};
+});
