@@ -1,19 +1,27 @@
+import { type FirebaseApp, initializeApp } from "firebase/app";
+import { getAuth, signInAnonymously, type Unsubscribe } from "firebase/auth";
+import { collection, getFirestore, onSnapshot } from "firebase/firestore";
 import { useAtom } from "jotai";
 import uniqBy from "lodash/uniqBy";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { telemetryListAtom } from "~/atoms/telemetryItem";
 import {
-	type ErrorData,
+	ErrorData,
 	type LocationData,
 	type LogData,
 	registerTelemetryListener,
 } from "~/domain/commands";
+import { isLocalServerEnabledAsync } from "~/utils/server";
 
 export const useTelemetry = () => {
+	const [isLocalServerAvailable, setIsLocalServerAvailable] = useState<
+		boolean | null
+	>(null);
 	const [error, setError] = useState<ErrorData | null>(null);
 	const [consoleLogs, setConsoleLogs] = useState<LogData[]>([]);
-
 	const [telemetryList, setTelemetryList] = useAtom(telemetryListAtom);
+
+	const firebaseAppRef = useRef<FirebaseApp | null>(null);
 
 	const handleLocationUpdate = useCallback(
 		(data: LocationData) => {
@@ -31,14 +39,92 @@ export const useTelemetry = () => {
 	);
 
 	useEffect(() => {
+		const updateServerAvailabilityAsync = async () => {
+			setIsLocalServerAvailable(await isLocalServerEnabledAsync());
+		};
+		updateServerAvailabilityAsync();
+	}, []);
+
+	useEffect(() => {
+		if (!isLocalServerAvailable) {
+			return;
+		}
+
 		registerTelemetryListener({
 			onLocationUpdate: handleLocationUpdate,
-			onError: setError,
+			onError: (err) => setError(err),
 			onLog: (log) => {
 				setConsoleLogs((prev) => uniqBy([...prev, log], "id"));
 			},
 		});
-	}, [handleLocationUpdate]);
+	}, [handleLocationUpdate, isLocalServerAvailable]);
 
-	return { telemetryList, error, consoleLogs };
+	useEffect(() => {
+		if (isLocalServerAvailable) {
+			return;
+		}
+
+		let unsubLocations: Unsubscribe | null = null;
+
+		const firebaseConfig = {
+			apiKey: import.meta.env.VITE_FIR_API_KEY,
+			authDomain: import.meta.env.VITE_FIR_AUTH_DOMAIN,
+			databaseURL: import.meta.env.VITE_FIR_DATABASE_URL,
+			projectId: import.meta.env.VITE_FIR_PROJECT_ID,
+			storageBucket: import.meta.env.VITE_FIR_STORAGE_BUCKET,
+			messagingSenderId: import.meta.env.VITE_FIR_MESSAGING_SENDER_ID,
+			appId: import.meta.env.VITE_FIR_APP_ID,
+			measurementId: import.meta.env.VITE_FIR_MEASUREMENT_ID,
+		};
+
+		const setupFirebaseAsync = async () => {
+			const app = initializeApp(firebaseConfig);
+			firebaseAppRef.current = app;
+
+			const auth = getAuth(app);
+
+			try {
+				await signInAnonymously(auth);
+			} catch (err) {
+				const errData = ErrorData.parse({ type: "unknown", raw: err });
+				setError(errData);
+			}
+
+			const db = getFirestore();
+			unsubLocations = onSnapshot(
+				collection(db, "telemetryLocations"),
+				(snapshot) => {
+					for (const change of snapshot.docChanges()) {
+						const data = change.doc.data();
+						switch (change.type) {
+							case "added":
+								setTelemetryList((prev) => ({
+									...prev.slice(-9999),
+									id: change.doc.id,
+									...data,
+								}));
+								break;
+							case "modified":
+								break;
+							case "removed":
+								break;
+						}
+					}
+				},
+			);
+		};
+
+		setupFirebaseAsync();
+
+		return () => {
+			unsubLocations?.();
+		};
+	}, [isLocalServerAvailable, setTelemetryList]);
+
+	return {
+		telemetryList,
+		error,
+		consoleLogs,
+		isLocalServerAvailable,
+	};
 };
