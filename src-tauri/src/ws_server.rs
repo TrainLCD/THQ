@@ -100,7 +100,7 @@ async fn handle_connection(
                         }),
                         Message::Text(
                             serde_json::json!({
-                            "id": device_id_value.to_string(),
+                            "id": nanoid::nanoid!(),
                             "timestamp": timestamp_value.as_u64().unwrap(),
                             "level": log_value["level"].to_string(),
                             "message": log_value["message"].to_string(),
@@ -111,6 +111,26 @@ async fn handle_connection(
                         ),
                     )
                 }
+                Some("subscribe") => (
+                    TelemetryEvent::LogUpdate(LogData {
+                        id: nanoid::nanoid!(),
+                        timestamp: chrono::Utc::now().timestamp_millis() as u64,
+                        level: "info".to_string(),
+                        message: "New subscriber added.".to_string(),
+                        device: "THQ Client".to_string(),
+                    }),
+                    Message::Text(
+                        serde_json::json!({
+                        "id": nanoid::nanoid!(),
+                        "timestamp":chrono::Utc::now().timestamp_millis() as u64,
+                        "level": "info".to_string(),
+                        "message": "New subscriber added.".to_string(),
+                        "device": "THQ Client".to_string(),
+                        })
+                        .to_string()
+                        .into(),
+                    ),
+                ),
                 txt => (
                     TelemetryEvent::Error(ErrorData {
                         r#type: "unknown".to_string(),
