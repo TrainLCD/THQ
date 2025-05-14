@@ -73,7 +73,6 @@ export function registerTelemetryListener(handlers: {
 					type: "unknown",
 					raw: parsed.error,
 				});
-
 				break;
 			}
 			case "error":

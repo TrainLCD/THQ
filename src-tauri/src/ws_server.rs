@@ -102,12 +102,12 @@ async fn handle_connection(
                         }),
                         Message::Text(
                             serde_json::json!({
-                            "id": nanoid::nanoid!(),
-                            "type": "log".to_string(),
-                            "timestamp": timestamp_value.as_u64().unwrap(),
-                            "level": log_value["level"].to_string(),
-                            "message": log_value["message"].to_string(),
-                            "device": device_id_value.to_string(),
+                                "id": nanoid::nanoid!(),
+                                "type": "log".to_string(),
+                                "timestamp": timestamp_value.as_u64().unwrap(),
+                                "level": log_value["level"].as_str().unwrap().to_string(),
+                                "message": log_value["message"].as_str().unwrap().to_string(),
+                                "device": device_id_value.to_string(),
                             })
                             .to_string()
                             .into(),
