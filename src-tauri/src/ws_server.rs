@@ -88,15 +88,14 @@ async fn handle_connection(
                 Some("log") => {
                     let device_id_value = value["device"].as_str().unwrap();
                     let timestamp_value = value["timestamp"].clone();
-                    let level_value = value["level"].as_str().unwrap();
-                    let message_value = value["message"].as_str().unwrap();
+                    let log_value = value["log"].clone();
 
                     (
                         TelemetryEvent::LogUpdate(LogData {
                             id: device_id_value.to_string(),
                             timestamp: timestamp_value.as_u64().unwrap(),
-                            level: level_value.to_string(),
-                            message: message_value.to_string(),
+                            level: log_value["level"].to_string(),
+                            message: log_value["message"].to_string(),
                             device: device_id_value.to_string(),
                         }),
                         Message::Text(
