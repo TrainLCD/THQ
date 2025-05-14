@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { telemetryListAtom } from "~/atoms/telemetryItem";
 import {
 	ErrorData,
-	type LocationData,
+	LocationData,
 	type LogData,
 	registerTelemetryListener,
 } from "~/domain/commands";
@@ -95,14 +95,29 @@ export const useTelemetry = () => {
 				collection(db, "telemetryLocations"),
 				(snapshot) => {
 					for (const change of snapshot.docChanges()) {
-						const data = change.doc.data();
+						const docData = change.doc.data();
+						const locationData = LocationData.safeParse({
+							id: change.doc.id,
+							lat: docData.latitude,
+							lon: docData.longitude,
+							timestamp: docData.timestamp?.toDate().getTime(),
+						});
+
+						if (locationData.error) {
+							return;
+						}
+
 						switch (change.type) {
 							case "added":
-								setTelemetryList((prev) => ({
-									...prev.slice(-9999),
-									id: change.doc.id,
-									...data,
-								}));
+								setTelemetryList((prev) =>
+									uniqBy(
+										[
+											...prev.slice(-9999), // 最大10,000件まで保持
+											locationData.data,
+										],
+										"id",
+									),
+								);
 								break;
 							case "modified":
 								break;

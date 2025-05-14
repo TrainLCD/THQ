@@ -1,10 +1,19 @@
 use chrono::{DateTime, Utc};
 use jsonwebtoken::{encode, EncodingKey, Header};
+use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
 
+static TOKEN_CACHE: Lazy<RwLock<Option<CachedToken>>> = Lazy::new(|| RwLock::new(None));
+
+struct CachedToken {
+    token: String,
+    expires_at: Instant,
+}
 #[derive(Deserialize)]
 #[allow(dead_code)]
 struct ServiceAccount {
@@ -100,6 +109,26 @@ async fn get_access_token() -> Result<String, Box<dyn std::error::Error>> {
     Ok(resp["access_token"].as_str().unwrap().to_string())
 }
 
+async fn get_cached_access_token() -> Result<String, Box<dyn std::error::Error>> {
+    {
+        let cache = TOKEN_CACHE.read().await;
+        if let Some(cached) = &*cache {
+            if cached.expires_at > Instant::now() {
+                return Ok(cached.token.clone());
+            }
+        }
+    }
+
+    let new_token = get_access_token().await?;
+    let mut cache = TOKEN_CACHE.write().await;
+    *cache = Some(CachedToken {
+        token: new_token.clone(),
+        expires_at: Instant::now() + Duration::from_secs(3500), // 安全のため少し短めに
+    });
+
+    Ok(new_token)
+}
+
 pub async fn send_location_to_firebase(
     location: &LocationValue,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -156,7 +185,7 @@ pub async fn send_log_to_firebase(log_value: &LogValue) -> Result<(), Box<dyn st
 
     let client = Client::new();
 
-    let access_token = get_access_token().await?; // Google OAuth 2.0トークン
+    let access_token = get_cached_access_token().await?; // Google OAuth 2.0トークン
 
     let url = format!(
         "https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents/{}",
