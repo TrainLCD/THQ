@@ -44,11 +44,13 @@ async fn handle_connection(
         if let Ok(text) = msg.to_text() {
             let value: Value = serde_json::from_str(text).unwrap();
 
-            let mut st = state.write().await;
-            st.subscribers
-                .entry("ALL".to_string())
-                .or_default()
-                .push(tx.clone());
+            {
+                let mut st = state.write().await;
+                st.subscribers
+                    .entry("ALL".to_string())
+                    .or_default()
+                    .push(tx.clone());
+            }
 
             let type_value = value["type"].as_str();
 
