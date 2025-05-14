@@ -66,13 +66,14 @@ export function registerTelemetryListener(handlers: {
 				const parsed = LocationData.safeParse(payload.data);
 				if (parsed.success) {
 					handlers.onLocationUpdate?.(parsed.data);
-				} else {
-					console.error("Invalid location data", parsed.error);
-					handlers.onError?.({
-						type: "unknown",
-						raw: parsed.error,
-					});
+					return;
 				}
+				console.error("Invalid location data", parsed.error);
+				handlers.onError?.({
+					type: "unknown",
+					raw: parsed.error,
+				});
+
 				break;
 			}
 			case "error":
@@ -82,13 +83,13 @@ export function registerTelemetryListener(handlers: {
 				const parsed = LogData.safeParse(payload.data);
 				if (parsed.success) {
 					handlers.onLog?.(parsed.data);
-				} else {
-					console.error("Invalid log data", parsed.error);
-					handlers.onError?.({
-						type: "unknown",
-						raw: parsed.error,
-					});
+					return;
 				}
+				console.error("Invalid log data", parsed.error);
+				handlers.onError?.({
+					type: "unknown",
+					raw: parsed.error,
+				});
 				break;
 			}
 		}

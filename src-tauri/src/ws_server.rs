@@ -94,8 +94,8 @@ async fn handle_connection(
                         TelemetryEvent::LogUpdate(LogData {
                             id: nanoid::nanoid!(),
                             timestamp: timestamp_value.as_u64().unwrap(),
-                            level: log_value["level"].to_string(),
-                            message: log_value["message"].to_string(),
+                            level: log_value["level"].as_str().unwrap().to_string(),
+                            message: log_value["message"].as_str().unwrap().to_string(),
                             device: device_id_value.to_string(),
                         }),
                         Message::Text(
