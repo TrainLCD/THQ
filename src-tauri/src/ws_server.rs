@@ -32,6 +32,14 @@ async fn handle_connection(
     let (mut write, mut read) = ws_stream.split();
     let (tx, mut rx) = unbounded_channel::<Message>();
 
+    {
+        let mut st = state.write().await;
+        st.subscribers
+            .entry("ALL".to_string())
+            .or_default()
+            .push(tx.clone());
+    }
+
     // 書き込み専用タスク
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
@@ -43,14 +51,6 @@ async fn handle_connection(
     while let Some(Ok(msg)) = read.next().await {
         if let Ok(text) = msg.to_text() {
             let value: Value = serde_json::from_str(text).unwrap();
-
-            {
-                let mut st = state.write().await;
-                st.subscribers
-                    .entry("ALL".to_string())
-                    .or_default()
-                    .push(tx.clone());
-            }
 
             let type_value = value["type"].as_str();
 
