@@ -1,13 +1,14 @@
 use crate::domain::ErrorData;
+use crate::domain::LocationData;
 use crate::domain::LogData;
-use crate::tauri_bridge;
+use crate::domain::TelemetryEvent;
+use crate::tauri_bridge::emit_event;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
 use log::error;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use tauri::AppHandle;
-use tauri_bridge::emit_event;
 use tokio::net::TcpStream;
 use tokio::{
     net::TcpListener,
@@ -17,9 +18,6 @@ use tokio::{
     },
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
-
-use crate::domain::LocationData;
-use crate::domain::TelemetryEvent;
 
 #[derive(Default)]
 struct State {
@@ -52,9 +50,12 @@ async fn handle_connection(
                     .entry("ALL".to_string())
                     .or_default()
                     .push(tx.clone());
+                continue;
             }
 
-            let (event, msg) = match value["type"].as_str() {
+            let type_value = value["type"].as_str();
+
+            let (event, msg) = match type_value {
                 Some("location_update") => {
                     let device_id_value = value["device"].as_str().unwrap();
                     let state_value = value["state"].as_str().unwrap();
