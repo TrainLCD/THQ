@@ -1,16 +1,15 @@
 use log::{error, info, warn};
-use std::{env, process, sync::Arc};
+use std::sync::Arc;
+use std::{env, process};
 use tauri_plugin_cli::CliExt;
 
-mod external;
+mod domain;
+mod tauri_bridge;
+mod ws_client;
 mod ws_server;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if dotenv::from_filename(".env.local").is_err() {
-        warn!("Could not load .env.local");
-    };
-
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_cli::init())
@@ -24,12 +23,19 @@ pub fn run() {
                         .and_then(|arg| arg.value.as_bool())
                         .unwrap_or(false);
 
+                    let app = Arc::new(app.handle().clone());
+
+                    // 起動時に WebSocket サーバを開始
                     if server_enabled {
                         info!("WebSocket server enabled!");
-                        let handle = Arc::new(app.handle().clone());
-                        tauri::async_runtime::spawn(ws_server::start_ws_server(handle));
+                        tauri::async_runtime::spawn(ws_server::start_ws_server(app));
                     } else {
-                        info!("WebSocket server has been disabled.");
+                        if dotenv::from_filename(".env.client.local").is_err() {
+                            warn!("Could not load .env.client.local");
+                        };
+
+                        info!("Client mode enabled!");
+                        tauri::async_runtime::spawn(ws_client::start_ws_client(app));
                     }
                 }
                 Err(err) => {
@@ -38,7 +44,6 @@ pub fn run() {
                 }
             }
 
-            // 起動時に WebSocket サーバを開始
             Ok(())
         })
         .run(tauri::generate_context!())
