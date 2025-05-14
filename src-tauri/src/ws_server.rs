@@ -63,7 +63,7 @@ async fn handle_connection(
 
                     (
                         TelemetryEvent::LocationUpdate(LocationData {
-                            id: device_id_value.to_string(),
+                            id: nanoid::nanoid!(),
                             lat: coords_value["latitude"].as_f64().unwrap(),
                             lon: coords_value["longitude"].as_f64().unwrap(),
                             accuracy: coords_value["accuracy"].as_f64(),
@@ -92,7 +92,7 @@ async fn handle_connection(
 
                     (
                         TelemetryEvent::LogUpdate(LogData {
-                            id: device_id_value.to_string(),
+                            id: nanoid::nanoid!(),
                             timestamp: timestamp_value.as_u64().unwrap(),
                             level: log_value["level"].to_string(),
                             message: log_value["message"].to_string(),

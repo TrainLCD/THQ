@@ -27,13 +27,14 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
 
         let event = match value_type {
             "location_update" => {
+                let id_value = value["id"].as_str().unwrap();
                 let device_id_value = value["device"].as_str().unwrap();
                 let state_value = value["state"].as_str().unwrap();
                 let coords_value = value["coords"].clone();
                 let timestamp_value = value["timestamp"].clone();
 
                 TelemetryEvent::LocationUpdate(LocationData {
-                    id: nanoid::nanoid!(),
+                    id: id_value.to_string(),
                     lat: coords_value["latitude"].as_f64().unwrap(),
                     lon: coords_value["longitude"].as_f64().unwrap(),
                     accuracy: coords_value["accuracy"].as_f64(),
@@ -44,13 +45,14 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
                 })
             }
             "log" => {
+                let id_value = value["id"].as_str().unwrap();
                 let timestamp_value = value["timestamp"].clone();
                 let level_value = value["level"].as_str().unwrap();
                 let message_value = value["message"].as_str().unwrap();
                 let device_id_value = value["device"].as_str().unwrap();
 
                 TelemetryEvent::LogUpdate(LogData {
-                    id: nanoid::nanoid!(),
+                    id: id_value.to_string(),
                     timestamp: timestamp_value.as_u64().unwrap(),
                     level: level_value.to_string(),
                     message: message_value.to_string(),
