@@ -74,6 +74,7 @@ async fn handle_connection(
                         }),
                         Message::Text(
                             serde_json::json!({
+                                "id": nanoid::nanoid!(),
                                 "type": "location_update",
                                 "device": device_id_value,
                                 "state": state_value,

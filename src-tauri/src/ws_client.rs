@@ -23,14 +23,16 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
 
     info!("Connected to remote WebSocket server");
 
-    ws_stream
-        .send(Message::Text(
-            json!({ "type": "subscribe" }).to_string().into(),
-        ))
-        .await
-        .unwrap();
+    {
+        ws_stream
+            .send(Message::Text(
+                json!({ "type": "subscribe" }).to_string().into(),
+            ))
+            .await
+            .expect("Failed to send subscribe message");
+    }
 
-    if let Some(Ok(msg)) = ws_stream.next().await {
+    while let Some(Ok(msg)) = ws_stream.next().await {
         let value: Value = serde_json::from_str(msg.to_text().unwrap()).unwrap();
 
         let value_type = value["type"].as_str().unwrap();
@@ -79,6 +81,6 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
             }),
         };
 
-        emit_event(app.as_ref(), &event);
+        emit_event(&(*app), &event);
     }
 }
