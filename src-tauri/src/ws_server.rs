@@ -102,8 +102,8 @@ async fn handle_connection(
                             serde_json::json!({
                             "id": device_id_value.to_string(),
                             "timestamp": timestamp_value.as_u64().unwrap(),
-                            "level": level_value.to_string(),
-                            "message": message_value.to_string(),
+                            "level": log_value["level"].to_string(),
+                            "message": log_value["message"].to_string(),
                             "device": device_id_value.to_string(),
                             })
                             .to_string()
