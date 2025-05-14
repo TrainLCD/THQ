@@ -63,6 +63,7 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
 
                 TelemetryEvent::LogUpdate(LogData {
                     id: id_value.to_string(),
+                    r#type: "log".to_string(),
                     timestamp: timestamp_value.as_u64().unwrap(),
                     level: level_value.to_string(),
                     message: message_value.to_string(),
