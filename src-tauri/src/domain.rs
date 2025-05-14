@@ -31,6 +31,7 @@ pub struct ErrorData {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LogData {
+    pub r#type: String,
     pub id: String,
     pub timestamp: u64,
     pub level: String,
