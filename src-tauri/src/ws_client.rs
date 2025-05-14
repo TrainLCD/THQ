@@ -5,12 +5,15 @@ use crate::domain::LocationData;
 use crate::domain::LogData;
 use crate::domain::TelemetryEvent;
 use crate::tauri_bridge::emit_event;
+use futures::SinkExt;
 use futures_util::StreamExt;
 use log::info;
+use serde_json::json;
 use serde_json::Value;
 use std::env;
 use tauri::AppHandle;
 use tokio_tungstenite::connect_async;
+use tungstenite::Message;
 
 pub async fn start_ws_client(app: Arc<AppHandle>) {
     let (mut ws_stream, _) =
@@ -19,6 +22,13 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
             .expect("Failed to connect");
 
     info!("Connected to remote WebSocket server");
+
+    ws_stream
+        .send(Message::Text(
+            json!({ "type": "subscribe" }).to_string().into(),
+        ))
+        .await
+        .unwrap();
 
     if let Some(Ok(msg)) = ws_stream.next().await {
         let value: Value = serde_json::from_str(msg.to_text().unwrap()).unwrap();
