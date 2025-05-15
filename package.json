@@ -13,6 +13,7 @@
 		"test:watch": "vitest --watch"
 	},
 	"dependencies": {
+		"@heroicons/react": "^2.2.0",
 		"@phosphor-icons/react": "^2.1.7",
 		"@tailwindcss/vite": "^4.1.5",
 		"@tauri-apps/api": "^2",
