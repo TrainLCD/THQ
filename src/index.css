@@ -24,3 +24,12 @@ body {
     animation: fade-in 0.3s ease-in-out forwards;
   }
 }
+
+@media (prefers-color-scheme: dark) {
+  .leaflet-layer,
+  .leaflet-control-zoom-in,
+  .leaflet-control-zoom-out,
+  .leaflet-control-attribution {
+    filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+  }
+}

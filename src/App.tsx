@@ -82,8 +82,8 @@ function App() {
 	);
 
 	return (
-		<main className="bg-gray-100 min-h-screen">
-			<header className="p-4 bg-white shadow-sm border-b border-gray-200 sticky top-0 z-9999 w-full select-none cursor-default">
+		<main className="bg-gray-100 dark:bg-black dark:text-white min-h-screen">
+			<header className="p-4 bg-white dark:bg-white/5 shadow-sm border-b border-gray-200 dark:border-white/15 sticky top-0 z-9999 w-full select-none cursor-default">
 				<h1 className="font-bold">
 					TrainLCD THQ
 					{isLocalServerAvailable !== null ? (
@@ -113,7 +113,9 @@ function App() {
 					</div>
 				) : (
 					<div className="w-1/2">
-						<p className="text-gray-500">No location data available.</p>
+						<p className="text-gray-500 dark:text-gray-400">
+							No location data available.
+						</p>
 					</div>
 				)}
 
@@ -122,7 +124,9 @@ function App() {
 					{movingLogs.length ? (
 						<MovingLogTable movingLogs={movingLogs} />
 					) : (
-						<p className="text-gray-500">No moving log data available.</p>
+						<p className="text-gray-500 dark:text-gray-400">
+							No moving log data available.
+						</p>
 					)}
 				</div>
 
@@ -134,7 +138,9 @@ function App() {
 							<p>Raw Data: {JSON.stringify(error.raw)}</p>
 						</div>
 					) : (
-						<p className="text-gray-500">No error data available.</p>
+						<p className="text-gray-500 dark:text-gray-400">
+							No error data available.
+						</p>
 					)}
 				</div>
 
@@ -143,7 +149,9 @@ function App() {
 					{sortedConsoleLogs.length ? (
 						<ConsoleLogTable logs={sortedConsoleLogs} />
 					) : (
-						<p className="text-gray-500">No log data available.</p>
+						<p className="text-gray-500 dark:text-gray-400">
+							No log data available.
+						</p>
 					)}
 				</div>
 			</section>

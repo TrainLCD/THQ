@@ -20,7 +20,7 @@ export const SpeedChart = memo(({ data }: { data: SpeedChartData[] }) => (
 			data={data.slice(-10)}
 			width={500}
 			height={300}
-			className="bg-white rounded-md"
+			className="bg-white dark:bg-white/5 rounded-md"
 			margin={{ top: 30, right: 30, left: 30, bottom: 10 }}
 		>
 			<CartesianGrid strokeDasharray="3 3" />
