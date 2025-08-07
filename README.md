@@ -2,6 +2,8 @@
 
 A real-time telemetry monitoring application built with Tauri, React, and TypeScript. THQ provides a comprehensive dashboard for tracking and visualizing location data, speed metrics, and system logs through WebSocket connections.
 
+> **Note**: THQ is specifically designed for TrainLCD development and testing purposes. This project is tailored to the TrainLCD ecosystem and may not be suitable for general-purpose telemetry monitoring applications.
+
 ## ✨ Features
 
 - **Real-time Location Tracking**: Monitor GPS coordinates, accuracy, and movement states
