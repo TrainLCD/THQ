@@ -247,7 +247,7 @@ THQ implements comprehensive error handling for:
 
 ## 📝 License
 
-This project is part of the TrainLCD ecosystem. Please refer to the license file for details.
+This project is part of the TrainLCD ecosystem. Please refer to the [LICENSE](./LICENSE) file for details.
 
 ## 🔗 Related Projects
 
