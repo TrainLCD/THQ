@@ -18,15 +18,7 @@ export const useTelemetry = () => {
 
 	const handleLocationUpdate = useCallback(
 		(data: LocationData) => {
-			setTelemetryList((prev) =>
-				uniqBy(
-					[
-						...prev.slice(-9999), // 最大10,000件まで保持
-						{ ...data },
-					],
-					"id",
-				),
-			);
+			setTelemetryList((prev) => uniqBy([...prev, { ...data }], "id"));
 		},
 		[setTelemetryList],
 	);
