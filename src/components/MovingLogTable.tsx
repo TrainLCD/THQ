@@ -45,17 +45,15 @@ export const MovingLogTable = memo(
                     ? "—"
                     : `${t.lon.toFixed(5)}, ${t.lat.toFixed(5)}`}
                 </td>
-                {(t?.speed ?? 0) < 0 ? (
+                {t.speed == null ? (
+                  <td className="p-2 border border-gray-200 dark:border-white/15">—</td>
+                ) : t.speed < 0 ? (
                   <td className="p-2 border border-gray-200 dark:border-white/15 text-red-600 font-bold">
-                    {(t.speed ?? 0)?.toFixed(2)}m/s (
-                    {toKMH(t.speed ?? 0).toFixed(2)}
-                    km/h)
+                    {t.speed.toFixed(2)}m/s ({toKMH(t.speed).toFixed(2)}km/h)
                   </td>
                 ) : (
                   <td className="p-2 border border-gray-200 dark:border-white/15">
-                    {(t.speed ?? 0)?.toFixed(2)}m/s (
-                    {toKMH(t.speed ?? 0).toFixed(2)}
-                    km/h)
+                    {t.speed.toFixed(2)}m/s ({toKMH(t.speed).toFixed(2)}km/h)
                   </td>
                 )}
                 {(t?.accuracy ?? 0) > BAD_ACCURACY_THRESHOLD ? (
