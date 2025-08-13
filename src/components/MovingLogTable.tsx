@@ -56,13 +56,15 @@ export const MovingLogTable = memo(
                     {t.speed.toFixed(2)}m/s ({toKMH(t.speed).toFixed(2)}km/h)
                   </td>
                 )}
-                {(t?.accuracy ?? 0) > BAD_ACCURACY_THRESHOLD ? (
+                {t.accuracy == null ? (
+                  <td className="p-2 border border-gray-200 dark:border-white/15">—</td>
+                ) : t.accuracy > BAD_ACCURACY_THRESHOLD ? (
                   <td className="p-2 border border-gray-200 dark:border-white/15 text-red-600 font-bold">
-                    {t.accuracy?.toFixed(2)}m
+                    {t.accuracy.toFixed(2)}m
                   </td>
                 ) : (
                   <td className="p-2 border border-gray-200 dark:border-white/15">
-                    {t.accuracy?.toFixed(2)}m
+                    {t.accuracy.toFixed(2)}m
                   </td>
                 )}
                 <td className="p-2 border border-gray-200 dark:border-white/15">
