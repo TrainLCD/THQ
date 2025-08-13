@@ -1,11 +1,22 @@
-import { memo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { memo, useRef } from "react";
 import type { LogData } from "~/domain/commands";
 import { LOG_LEVEL_ICONS } from "~/domain/emoji";
 
 export const ConsoleLogTable = memo(({ logs }: { logs: LogData[] }) => {
+  const parentRef = useRef(null);
+  const rowVirtualizer = useVirtualizer({
+    count: logs.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 40,
+  });
+
   return (
     <div className="overflow-y-auto max-h-96 overscroll-none border border-gray-200 dark:border-white/15 rounded-md">
-      <table className="bg-white dark:bg-white/5 w-full border-collapse">
+      <table
+        className="bg-white dark:bg-white/5 w-full border-collapse"
+        ref={parentRef}
+      >
         <caption className="sr-only">デバッグログ一覧</caption>
         <thead className="sticky shadow top-0 z-10 bg-white dark:bg-black border-b border-b-gray-200 dark:border-b-white/15">
           <tr>
@@ -24,19 +35,19 @@ export const ConsoleLogTable = memo(({ logs }: { logs: LogData[] }) => {
           </tr>
         </thead>
         <tbody>
-          {logs.map((l) => (
-            <tr key={l.id}>
+          {rowVirtualizer.getVirtualItems().map((vItem) => (
+            <tr key={vItem.key}>
               <td className="p-2 border border-gray-200 dark:border-white/15 w-16 text-center">
-                {LOG_LEVEL_ICONS[l.level]}
+                {LOG_LEVEL_ICONS[logs[vItem.index].level]}
               </td>
               <td className="p-2 border border-gray-200 dark:border-white/15">
-                {new Date(l.timestamp).toLocaleString()}
+                {new Date(logs[vItem.index].timestamp).toLocaleString()}
               </td>
               <td className="p-2 border border-gray-200 dark:border-white/15">
-                {l.message}
+                {logs[vItem.index].message}
               </td>
               <td className="p-2 border border-gray-200 dark:border-white/15">
-                {l.device}
+                {logs[vItem.index].device}
               </td>
             </tr>
           ))}
