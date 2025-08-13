@@ -4,7 +4,7 @@ import { LOG_LEVEL_ICONS } from "~/domain/emoji";
 
 export const ConsoleLogTable = memo(({ logs }: { logs: LogData[] }) => {
   return (
-    <div className="overflow-y-scroll max-h-96 overscroll-none border border-gray-200 dark:border-white/15 rounded-md">
+    <div className="overflow-y-auto max-h-96 overscroll-none border border-gray-200 dark:border-white/15 rounded-md">
       <table className="bg-white dark:bg-white/5 w-full">
         <thead className="sticky shadow top-0 z-10 bg-white dark:bg-black border-b border-b-gray-200 dark:border-b-white/15">
           <tr>
