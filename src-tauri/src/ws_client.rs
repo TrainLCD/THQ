@@ -38,7 +38,7 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
                                         &(*app),
                                         &TelemetryEvent::Error(ErrorData {
                                             r#type: "json_parse_error".to_string(),
-                                            raw: serde_json::json!({ "error": e.to_string() }),
+                                            raw: json!({ "error": e.to_string() }),
                                         }),
                                     );
                                     continue;
@@ -82,11 +82,11 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
                                         device: device_id_value.to_string(),
                                     })
                                 }
-                                txt => TelemetryEvent::Error(ErrorData {
+                                t => TelemetryEvent::Error(ErrorData {
                                     r#type: "unknown".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Unknown event type",
-                                        "raw": txt.to_string(),
+                                    raw: json!({
+                                        "error": format!("Unknown event type: {}", t),
+                                        "raw": value.to_string(),
                                     }),
                                 }),
                             };
