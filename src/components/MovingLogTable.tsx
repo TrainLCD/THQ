@@ -81,7 +81,7 @@ export const MovingLogTable = memo(
                     —
                   </td>
                 ) : t.speed < 0 ? (
-                  <td className="p-2 border border-gray-200 dark:border-white/15 text-red-600 font-bold tabular-nums whitespace-nowrap">
+                  <td className="p-2 border border-gray-200 dark:border-white/15 text-red-600 font-bold font-mono tabular-nums whitespace-nowrap">
                     {t.speed.toFixed(2)} m/s ({toKMH(t.speed).toFixed(2)} km/h)
                   </td>
                 ) : (
@@ -94,7 +94,7 @@ export const MovingLogTable = memo(
                     —
                   </td>
                 ) : t.accuracy > BAD_ACCURACY_THRESHOLD ? (
-                  <td className="p-2 border border-gray-200 dark:border-white/15 text-red-600 font-bold tabular-nums whitespace-nowrap">
+                  <td className="p-2 border border-gray-200 dark:border-white/15 text-red-600 font-bold font-mono tabular-nums whitespace-nowrap">
                     {t.accuracy.toFixed(2)}m
                   </td>
                 ) : (
