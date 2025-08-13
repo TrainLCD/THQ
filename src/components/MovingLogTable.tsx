@@ -41,7 +41,9 @@ export const MovingLogTable = memo(
                   {new Date(t.timestamp).toLocaleString()}
                 </td>
                 <td className="p-2 border border-gray-200 dark:border-white/15">
-                  {t.lon?.toFixed(5)}, {t.lat?.toFixed(5)}
+                  {t.lon == null || t.lat == null
+                    ? "—"
+                    : `${t.lon.toFixed(5)}, ${t.lat.toFixed(5)}`}
                 </td>
                 {(t?.speed ?? 0) < 0 ? (
                   <td className="p-2 border border-gray-200 dark:border-white/15 text-red-600 font-bold">
