@@ -83,7 +83,7 @@ function App() {
 
   return (
     <main className="bg-gray-100 dark:bg-black dark:text-white min-h-screen">
-      <header className="p-4 bg-white dark:bg-black shadow-sm border-b border-gray-200 dark:border-white/15 sticky top-0 z-9999 w-full select-none cursor-default">
+      <header className="p-4 bg-white dark:bg-black/30 backdrop-blur-md shadow-sm border-b border-gray-200 dark:border-white/15 sticky top-0 z-9999 w-full select-none cursor-default">
         <h1 className="font-bold">
           TrainLCD THQ
           {isLocalServerAvailable !== null ? (
