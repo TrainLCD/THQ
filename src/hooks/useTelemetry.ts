@@ -1,3 +1,4 @@
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { useAtom } from "jotai";
 import uniqBy from "lodash/uniqBy";
 import { useCallback, useEffect, useState } from "react";
@@ -18,7 +19,15 @@ export const useTelemetry = () => {
 
 	const handleLocationUpdate = useCallback(
 		(data: LocationData) => {
-			setTelemetryList((prev) => uniqBy([...prev, { ...data }], "id"));
+			setTelemetryList((prev) =>
+				uniqBy(
+					[
+						...prev.slice(-9999), // 最大10,000件まで保持
+						{ ...data },
+					],
+					"id",
+				),
+			);
 		},
 		[setTelemetryList],
 	);
@@ -31,13 +40,17 @@ export const useTelemetry = () => {
 	}, []);
 
 	useEffect(() => {
+		let unlisten: UnlistenFn;
 		registerTelemetryListener({
 			onLocationUpdate: handleLocationUpdate,
 			onError: (err) => setError(err),
-			onLog: (log) => {
-				setConsoleLogs((prev) => uniqBy([...prev, log], "id"));
-			},
+			onLog: (log) => setConsoleLogs((prev) => uniqBy([...prev, log], "id")),
+		}).then((fn) => {
+			unlisten = fn;
 		});
+		return () => {
+			unlisten?.();
+		};
 	}, [handleLocationUpdate]);
 
 	return {

@@ -58,7 +58,7 @@ export function registerTelemetryListener(handlers: {
 	onError?: (error: ErrorData) => void;
 	onLog?: (log: LogData) => void;
 }) {
-	listen<TelemetryEvent>("telemetry", (event) => {
+	return listen<TelemetryEvent>("telemetry", (event) => {
 		const payload = event.payload;
 
 		switch (payload.type) {

@@ -4,7 +4,7 @@ import type { LogData } from "~/domain/commands";
 import { LOG_LEVEL_ICONS } from "~/domain/emoji";
 
 export const ConsoleLogTable = memo(({ logs }: { logs: LogData[] }) => {
-  const parentRef = useRef(null);
+  const parentRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: logs.length,
     getScrollElement: () => parentRef.current,
@@ -12,11 +12,11 @@ export const ConsoleLogTable = memo(({ logs }: { logs: LogData[] }) => {
   });
 
   return (
-    <div className="overflow-y-auto max-h-96 overscroll-none border border-gray-200 dark:border-white/15 rounded-md">
-      <table
-        className="bg-white dark:bg-white/5 w-full border-collapse"
-        ref={parentRef}
-      >
+    <div
+      className="overflow-y-auto max-h-96 overscroll-none border border-gray-200 dark:border-white/15 rounded-md"
+      ref={parentRef}
+    >
+      <table className="bg-white dark:bg-white/5 w-full border-collapse">
         <caption className="sr-only">デバッグログ一覧</caption>
         <thead className="sticky shadow top-0 z-10 bg-white dark:bg-black border-b border-b-gray-200 dark:border-b-white/15">
           <tr>
