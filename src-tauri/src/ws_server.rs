@@ -16,12 +16,13 @@ use tokio::{
         mpsc::{unbounded_channel, UnboundedSender},
         RwLock,
     },
+    time::{interval, Duration},
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 #[derive(Default)]
 struct State {
-    subscribers: HashMap<String, Vec<UnboundedSender<Message>>>,
+    subscribers: HashMap<String, HashMap<String, UnboundedSender<Message>>>,
 }
 
 async fn handle_connection(
@@ -29,27 +30,38 @@ async fn handle_connection(
     ws_stream: WebSocketStream<TcpStream>,
     state: Arc<RwLock<State>>,
 ) {
+    let connection_id = nanoid::nanoid!(); // 各接続に一意のIDを生成
     let (mut write, mut read) = ws_stream.split();
     let (tx, mut rx) = unbounded_channel::<Message>();
 
     // 書き込み専用タスク
-    tokio::spawn(async move {
+    let write_handle = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            let _ = write.send(msg).await;
+            if write.send(msg).await.is_err() {
+                break; // 接続が切れた場合はループを終了
+            }
         }
     });
 
     // 読み取りループ
-    while let Some(Ok(msg)) = read.next().await {
+    while let Some(msg_result) = read.next().await {
+        let msg = match msg_result {
+            Ok(msg) => msg,
+            Err(_) => break, // エラーが発生した場合はループを終了
+        };
+
         if let Ok(text) = msg.to_text() {
-            let value: Value = serde_json::from_str(text).unwrap();
+            let value: Value = match serde_json::from_str(text) {
+                Ok(v) => v,
+                Err(_) => continue, // JSONパースエラーの場合は次のメッセージを処理
+            };
 
             if let Some("subscribe") = value["type"].as_str() {
                 let mut st = state.write().await;
                 st.subscribers
                     .entry("ALL".to_string())
                     .or_default()
-                    .push(tx.clone());
+                    .insert(connection_id.clone(), tx.clone());
             }
 
             let type_value = value["type"].as_str();
@@ -159,11 +171,20 @@ async fn handle_connection(
 
             let st = state.read().await;
             if let Some(subs) = st.subscribers.get("ALL") {
-                for sub_tx in subs {
+                for (_, sub_tx) in subs {
                     let _ = sub_tx.send(msg.clone());
                 }
             }
         }
+    }
+
+    // 接続終了時のクリーンアップ
+    write_handle.abort();
+
+    // subscribersから該当の接続を削除
+    let mut st = state.write().await;
+    if let Some(subs) = st.subscribers.get_mut("ALL") {
+        subs.remove(&connection_id);
     }
 }
 
@@ -171,6 +192,19 @@ pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
     let listener = TcpListener::bind("0.0.0.0:8080").await?;
 
     let state = Arc::new(RwLock::new(State::default()));
+
+    // 定期的なクリーンアップタスク（切断された接続を削除）
+    let cleanup_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        let mut interval = interval(Duration::from_secs(60)); // 1分ごとにクリーンアップ
+        loop {
+            interval.tick().await;
+            let mut st = cleanup_state.write().await;
+            for (_, subs) in st.subscribers.iter_mut() {
+                subs.retain(|_, tx| !tx.is_closed());
+            }
+        }
+    });
 
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
@@ -195,71 +229,3 @@ pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
 
     Ok(())
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use serde_json::json;
-
-//     #[test]
-//     fn test_deserialize_valid_location() {
-//         let input = json!({
-//             "type": "location_update",
-//             "data": {
-//                 "lat": 35.0,
-//                 "lon": 139.0,
-//                 "accuracy": 5.0,
-//                 "speed": 10.0,
-//                 "timestamp": 1234567890
-//             }
-//         });
-
-//         let result: TelemetryEvent = serde_json::from_value(input).expect("should deserialize");
-
-//         match result {
-//             TelemetryEvent::LocationUpdate(data) => {
-//                 assert_eq!(data.lat, 35.0);
-//                 assert_eq!(data.lon, 139.0);
-//             }
-//             _ => panic!("expected location_update variant"),
-//         }
-//     }
-
-//     #[test]
-//     fn test_deserialize_error_event() {
-//         let input = json!({
-//             "type": "error",
-//             "data": {
-//                 "type": "accuracy_low",
-//                 "raw": {"foo": "bar"}
-//             }
-//         });
-
-//         let result: TelemetryEvent = serde_json::from_value(input).expect("should deserialize");
-
-//         match result {
-//             TelemetryEvent::Error(data) => {
-//                 assert_eq!(data.r#type, "accuracy_low");
-//                 assert_eq!(data.raw["foo"], "bar");
-//             }
-//             _ => panic!("expected error variant"),
-//         }
-//     }
-
-//     #[test]
-//     fn test_invalid_json_should_fail() {
-//         let input = json!({
-//             "type": "location_update",
-//             "data": {
-//                 "lat": "not a number",
-//                 "lon": 139.0,
-//                 "accuracy": 5.0,
-//                 "speed": 10.0,
-//                 "timestamp": 1234567890
-//             }
-//         });
-
-//         let result = serde_json::from_value::<TelemetryEvent>(input);
-//         assert!(result.is_err());
-//     }
-// }
