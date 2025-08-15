@@ -29,13 +29,19 @@ export const useTelemetry = () => {
 
   useEffect(() => {
     const updateServerAvailabilityAsync = async () => {
-      setIsLocalServerAvailable(await isLocalServerEnabledAsync());
+      try {
+        setIsLocalServerAvailable(await isLocalServerEnabledAsync());
+      } catch (e) {
+        console.error("Failed to check local server availability", e);
+        setError({ type: "unknown", raw: e });
+      }
     };
     updateServerAvailabilityAsync();
   }, []);
 
   useEffect(() => {
-    let unlisten: UnlistenFn;
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
     registerTelemetryListener({
       onLocationUpdate: handleLocationUpdate,
       onError: (err) => setError(err),
@@ -47,6 +53,10 @@ export const useTelemetry = () => {
         }),
     })
       .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
         unlisten = fn;
       })
       .catch((e) => {
@@ -54,6 +64,7 @@ export const useTelemetry = () => {
         setError({ type: "unknown", raw: e });
       });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [handleLocationUpdate]);

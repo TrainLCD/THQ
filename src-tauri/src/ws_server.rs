@@ -72,7 +72,7 @@ async fn handle_connection(
                         Some(v) => v.to_string(),
                         None => continue,
                     };
-                    let state = match value.get("state").and_then(Value::as_str) {
+                    let moving_state = match value.get("state").and_then(Value::as_str) {
                         Some(v) => v.to_string(),
                         None => continue,
                     };
@@ -86,10 +86,7 @@ async fn handle_connection(
                         None => continue,
                     };
                     let accuracy = coords.get("accuracy").and_then(Value::as_f64);
-                    let speed = match coords.get("speed").and_then(Value::as_f64) {
-                        Some(v) => v,
-                        None => continue,
-                    };
+                    let speed = coords.get("speed").and_then(Value::as_f64).unwrap_or(0.0); // 欠損時は 0.0 を既定値とする
                     let timestamp = match value.get("timestamp").and_then(Value::as_u64) {
                         Some(v) => v,
                         None => continue,
@@ -102,16 +99,16 @@ async fn handle_connection(
                             lon,
                             accuracy,
                             speed,
-                            device: device_id.clone(), // 型を確認の上、不要なら削除
-                            state: state.clone(),      // 同上
-                            timestamp,                 // 型に応じて Option<u64> か u64
+                            device: device_id.clone(),
+                            state: moving_state.clone(),
+                            timestamp,
                         }),
                         Message::Text(
                             serde_json::json!({
                                 "id": nanoid::nanoid!(),
                                 "type": "location_update",
                                 "device": device_id,
-                                "state": state,
+                                "state": moving_state,
                                 "coords": {
                                     "latitude": lat,
                                     "longitude": lon,
