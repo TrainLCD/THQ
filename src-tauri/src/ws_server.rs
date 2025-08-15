@@ -13,7 +13,7 @@ use tokio::net::TcpStream;
 use tokio::{
     net::TcpListener,
     sync::{
-        mpsc::{unbounded_channel, UnboundedSender},
+        mpsc::{channel, Sender},
         RwLock,
     },
     time::{interval, Duration},
@@ -22,7 +22,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 #[derive(Default)]
 struct State {
-    subscribers: HashMap<String, HashMap<String, UnboundedSender<Message>>>,
+    subscribers: HashMap<String, HashMap<String, Sender<Message>>>,
 }
 
 async fn handle_connection(
@@ -32,7 +32,7 @@ async fn handle_connection(
 ) {
     let connection_id = nanoid::nanoid!(); // 各接続に一意のIDを生成
     let (mut write, mut read) = ws_stream.split();
-    let (tx, mut rx) = unbounded_channel::<Message>();
+    let (tx, mut rx) = channel::<Message>(1024);
 
     // 書き込み専用タスク
     let write_handle = tokio::spawn(async move {
@@ -172,7 +172,7 @@ async fn handle_connection(
             let st = state.read().await;
             if let Some(subs) = st.subscribers.get("ALL") {
                 for (_, sub_tx) in subs {
-                    let _ = sub_tx.send(msg.clone());
+                    let _ = sub_tx.try_send(msg.clone());
                 }
             }
         }
