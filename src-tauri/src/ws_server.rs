@@ -68,30 +68,57 @@ async fn handle_connection(
 
             let (event, msg) = match type_value {
                 Some("location_update") => {
-                    let device_id_value = value["device"].as_str().unwrap();
-                    let state_value = value["state"].as_str().unwrap();
-                    let coords_value = value["coords"].clone();
-                    let timestamp_value = value["timestamp"].clone();
+                    let device_id = match value.get("device").and_then(Value::as_str) {
+                        Some(v) => v.to_string(),
+                        None => continue,
+                    };
+                    let state = match value.get("state").and_then(Value::as_str) {
+                        Some(v) => v.to_string(),
+                        None => continue,
+                    };
+                    let coords = &value["coords"];
+                    let lat = match coords.get("latitude").and_then(Value::as_f64) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    let lon = match coords.get("longitude").and_then(Value::as_f64) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    let accuracy = coords.get("accuracy").and_then(Value::as_f64);
+                    let speed = match coords.get("speed").and_then(Value::as_f64) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    let timestamp = match value.get("timestamp").and_then(Value::as_u64) {
+                        Some(v) => v,
+                        None => continue,
+                    };
 
                     (
                         TelemetryEvent::LocationUpdate(LocationData {
                             id: nanoid::nanoid!(),
-                            lat: coords_value["latitude"].as_f64().unwrap(),
-                            lon: coords_value["longitude"].as_f64().unwrap(),
-                            accuracy: coords_value["accuracy"].as_f64(),
-                            speed: coords_value["speed"].as_f64().unwrap(),
-                            device: device_id_value.to_string(),
-                            state: state_value.to_string(),
-                            timestamp: timestamp_value.as_u64().unwrap(),
+                            lat,
+                            lon,
+                            accuracy,
+                            speed,
+                            device: device_id.clone(), // 型を確認の上、不要なら削除
+                            state: state.clone(),      // 同上
+                            timestamp,                 // 型に応じて Option<u64> か u64
                         }),
                         Message::Text(
                             serde_json::json!({
                                 "id": nanoid::nanoid!(),
                                 "type": "location_update",
-                                "device": device_id_value,
-                                "state": state_value,
-                                "coords": coords_value,
-                                "timestamp": timestamp_value.as_u64().unwrap()
+                                "device": device_id,
+                                "state": state,
+                                "coords": {
+                                    "latitude": lat,
+                                    "longitude": lon,
+                                    "accuracy": accuracy,
+                                    "speed": speed
+                                },
+                                "timestamp": timestamp
                             })
                             .to_string()
                             .into(),
@@ -99,27 +126,41 @@ async fn handle_connection(
                     )
                 }
                 Some("log") => {
-                    let device_id_value = value["device"].as_str().unwrap();
-                    let timestamp_value = value["timestamp"].clone();
-                    let log_value = value["log"].clone();
+                    let device_id_value = match value.get("device").and_then(Value::as_str) {
+                        Some(v) => v.to_string(),
+                        None => continue,
+                    };
+                    let timestamp = match value.get("timestamp").and_then(Value::as_u64) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    let log_value = &value["log"];
+                    let level = match log_value.get("level").and_then(Value::as_str) {
+                        Some(v) => v.to_string(),
+                        None => continue,
+                    };
+                    let message = match log_value.get("message").and_then(Value::as_str) {
+                        Some(v) => v.to_string(),
+                        None => continue,
+                    };
 
                     (
                         TelemetryEvent::LogUpdate(LogData {
                             id: nanoid::nanoid!(),
                             r#type: "log".to_string(),
-                            timestamp: timestamp_value.as_u64().unwrap(),
-                            level: log_value["level"].as_str().unwrap().to_string(),
-                            message: log_value["message"].as_str().unwrap().to_string(),
-                            device: device_id_value.to_string(),
+                            timestamp,
+                            level: level.clone(),
+                            message: message.clone(),
+                            device: device_id_value.clone(),
                         }),
                         Message::Text(
                             serde_json::json!({
                                 "id": nanoid::nanoid!(),
                                 "type": "log".to_string(),
-                                "timestamp": timestamp_value.as_u64().unwrap(),
-                                "level": log_value["level"].as_str().unwrap().to_string(),
-                                "message": log_value["message"].as_str().unwrap().to_string(),
-                                "device": device_id_value.to_string(),
+                                "timestamp": timestamp,
+                                 "level": level,
+                                 "message": message,
+                                 "device": device_id_value,
                             })
                             .to_string()
                             .into(),
@@ -169,11 +210,16 @@ async fn handle_connection(
 
             emit_event(app, &event);
 
-            let st = state.read().await;
-            if let Some(subs) = st.subscribers.get("ALL") {
-                for (_, sub_tx) in subs {
-                    let _ = sub_tx.try_send(msg.clone());
-                }
+            let targets = {
+                let st = state.read().await;
+                st.subscribers
+                    .get("ALL")
+                    .map(|subs| subs.values().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default()
+            };
+            // ロック解放後に配信
+            for sub_tx in targets {
+                let _ = sub_tx.try_send(msg.clone());
             }
         }
     }
