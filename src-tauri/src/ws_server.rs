@@ -46,7 +46,13 @@ async fn handle_connection(
     // 読み取りループ
     while let Some(msg_result) = read.next().await {
         let msg = match msg_result {
-            Ok(msg) => msg,
+            Ok(msg) => match msg {
+                tokio_tungstenite::tungstenite::Message::Ping(payload) => {
+                    let _ = tx.try_send(tokio_tungstenite::tungstenite::Message::Pong(payload));
+                    continue;
+                }
+                _ => msg,
+            },
             Err(_) => break, // エラーが発生した場合はループを終了
         };
 
