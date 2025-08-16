@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use tauri::AppHandle;
 use tokio::net::TcpStream;
+use tokio::time::MissedTickBehavior;
 use tokio::{
     net::TcpListener,
     sync::{
@@ -48,9 +49,15 @@ async fn handle_connection(
         let msg = match msg_result {
             Ok(msg) => match msg {
                 tokio_tungstenite::tungstenite::Message::Ping(payload) => {
-                    let _ = tx.try_send(tokio_tungstenite::tungstenite::Message::Pong(payload));
+                    if tx
+                        .try_send(tokio_tungstenite::tungstenite::Message::Pong(payload))
+                        .is_err()
+                    {
+                        break;
+                    }
                     continue;
                 }
+
                 _ => msg,
             },
             Err(_) => break, // エラーが発生した場合はループを終了
@@ -358,7 +365,9 @@ async fn handle_connection(
             };
             // ロック解放後に配信
             for sub_tx in targets {
-                let _ = sub_tx.try_send(msg.clone());
+                if let Err(e) = sub_tx.try_send(msg.clone()) {
+                    log::warn!("broadcast dropped (ALL): {:?}", e);
+                }
             }
         }
     }
@@ -382,6 +391,7 @@ pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
     let cleanup_state = Arc::clone(&state);
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(60)); // 1分ごとにクリーンアップ
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
             let mut st = cleanup_state.write().await;
