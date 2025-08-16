@@ -346,7 +346,10 @@ async fn handle_connection(
                     Message::Text(
                         serde_json::json!({
                             "type": "error",
-                            "raw": txt.unwrap_or_default().to_string(),
+                            "data": {
+                                "type": "unknown",
+                                "reason": format!("Unknown event type: {}", txt.unwrap_or_default())
+                            }
                         })
                         .to_string()
                         .into(),
