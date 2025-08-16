@@ -123,6 +123,10 @@ async fn handle_connection(
                     )
                 }
                 Some("log") => {
+                    let type_value = match value.get("type").and_then(Value::as_str) {
+                        Some(v) => v.to_string(),
+                        None => continue,
+                    };
                     let device_id_value = match value.get("device").and_then(Value::as_str) {
                         Some(v) => v.to_string(),
                         None => continue,
@@ -144,7 +148,7 @@ async fn handle_connection(
                     (
                         TelemetryEvent::LogUpdate(LogData {
                             id: nanoid::nanoid!(),
-                            r#type: "system".to_string(),
+                            r#type: type_value,
                             timestamp,
                             level: level.clone(),
                             message: message.clone(),
