@@ -130,10 +130,10 @@ THQ handles three main types of telemetry events:
 ```typescript
 {
   id: string;
-  lat: number | null;
-  lon: number | null;
+  lat: number;
+  lon: number;
   accuracy: number | null;
-  speed: number | null;
+  speed: number;
   timestamp: number;
   state: "arrived" | "approaching" | "passing" | "moving";
   device: string;
@@ -193,10 +193,11 @@ THQ uses a JSON-based WebSocket protocol for communication:
 }
 ```
 
-**Location update (client to server):**
+**Location update:**
 
 ```json
 {
+  "id": "generated-id",
   "type": "location_update",
   "device": "device-id",
   "state": "moving",
@@ -210,28 +211,11 @@ THQ uses a JSON-based WebSocket protocol for communication:
 }
 ```
 
-**Location update (server to subscribers):**
+**Log message:**
 
 ```json
 {
-  "id": "unique-id",
-  "type": "location_update",
-  "device": "device-id",
-  "state": "moving",
-  "coords": {
-    "latitude": 35.0,
-    "longitude": 139.0,
-    "accuracy": 5.0,
-    "speed": 10.0
-  },
-  "timestamp": 1234567890
-}
-```
-
-**Log message (client to server):**
-
-```json
-{
+  "id": "generated-id",
   "type": "log",
   "device": "device-id",
   "timestamp": 1234567890,
@@ -239,34 +223,6 @@ THQ uses a JSON-based WebSocket protocol for communication:
     "type": "system",
     "level": "info",
     "message": "System operational"
-  }
-}
-```
-
-**Log message (server to subscribers):**
-
-```json
-{
-  "id": "unique-id",
-  "type": "log",
-  "device": "device-id",
-  "timestamp": 1234567890,
-  "log": {
-    "type": "system",
-    "level": "info",
-    "message": "System operational"
-  }
-}
-```
-
-**Error message:**
-
-```json
-{
-  "type": "error",
-  "data": {
-    "type": "json_parse_error",
-    "reason": "Failed to parse JSON: Unexpected token"
   }
 }
 ```
