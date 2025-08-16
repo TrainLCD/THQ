@@ -313,31 +313,34 @@ async fn handle_connection(
                         ),
                     )
                 }
-                Some("subscribe") => (
-                    TelemetryEvent::LogUpdate(LogData {
-                        id: nanoid::nanoid!(),
-                        r#type: "system".to_string(),
-                        timestamp: chrono::Utc::now().timestamp_millis() as u64,
-                        level: "info".to_string(),
-                        message: "New subscriber added.".to_string(),
-                        device: "THQ Client".to_string(),
-                    }),
-                    Message::Text(
-                        serde_json::json!({
-                            "id": nanoid::nanoid!(),
-                            "type": "log",
-                            "device": "THQ Client",
-                            "timestamp": chrono::Utc::now().timestamp_millis() as u64,
-                            "log": {
-                                "type": "system",
-                                "level": "info",
-                                "message": "New subscriber added."
-                            }
-                        })
-                        .to_string()
-                        .into(),
-                    ),
-                ),
+                Some("subscribe") => {
+                    let now = chrono::Utc::now().timestamp_millis() as u64;
+                    (
+                        TelemetryEvent::LogUpdate(LogData {
+                            id: nanoid::nanoid!(),
+                            r#type: "system".to_string(),
+                            timestamp: now,
+                            level: "info".to_string(),
+                            message: "New subscriber added.".to_string(),
+                            device: "THQ Client".to_string(),
+                        }),
+                        Message::Text(
+                            serde_json::json!({
+                                "id": nanoid::nanoid!(),
+                                "type": "log",
+                                "device": "THQ Client",
+                                "timestamp": now,
+                                "log": {
+                                    "type": "system",
+                                    "level": "info",
+                                    "message": "New subscriber added."
+                                }
+                            })
+                            .to_string()
+                            .into(),
+                        ),
+                    )
+                }
                 txt => (
                     TelemetryEvent::Error(ErrorData {
                         r#type: "unknown".to_string(),
