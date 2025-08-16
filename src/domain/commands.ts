@@ -33,8 +33,7 @@ export const ErrorData = z
       "invalid_coords",
       "unknown",
     ]),
-    // TODO: 後で考える
-    raw: z.unknown(),
+    reason: z.string(),
   })
   .strict();
 export type ErrorData = z.infer<typeof ErrorData>;
@@ -86,7 +85,10 @@ export function registerTelemetryListener(handlers: {
           event.payload
         );
       }
-      handlers.onError?.({ type: "unknown", raw: event.payload });
+      handlers.onError?.({
+        type: "unknown",
+        reason: `Invalid telemetry event: ${parsedEvent.error.message}`,
+      });
       return;
     }
     const payload = parsedEvent.data;

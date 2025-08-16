@@ -38,7 +38,11 @@ export const useTelemetry = () => {
         if (!disposed) setIsLocalServerAvailable(avail);
       } catch (e) {
         console.error("Failed to check local server availability", e);
-        if (!disposed) setError({ type: "unknown", raw: e });
+        if (!disposed)
+          setError({
+            type: "unknown",
+            reason: e instanceof Error ? e.message : String(e),
+          });
       }
     };
     updateServerAvailabilityAsync();
@@ -64,7 +68,11 @@ export const useTelemetry = () => {
       })
       .catch((e) => {
         console.error("Failed to register telemetry listener", e);
-        if (!disposed) setError({ type: "unknown", raw: e });
+        if (!disposed)
+          setError({
+            type: "unknown",
+            reason: e instanceof Error ? e.message : String(e),
+          });
       });
     return () => {
       disposed = true;

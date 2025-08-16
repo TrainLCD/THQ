@@ -145,7 +145,7 @@ THQ handles three main types of telemetry events:
 ```typescript
 {
   id: string;
-  type: "system";
+  type: "system" | "app" | "client";
   timestamp: number;
   level: "debug" | "info" | "warn" | "error";
   message: string;
@@ -157,8 +157,13 @@ THQ handles three main types of telemetry events:
 
 ```typescript
 {
-  type: "accuracy_low" | "invalid_coords" | "unknown";
-  raw: any;
+  type: "websocket_message_error" |
+    "json_parse_error" |
+    "payload_parse_error" |
+    "accuracy_low" |
+    "invalid_coords" |
+    "unknown";
+  reason: string;
 }
 ```
 
@@ -188,7 +193,7 @@ THQ uses a JSON-based WebSocket protocol for communication:
 }
 ```
 
-**Location update:**
+**Location update (client to server):**
 
 ```json
 {
@@ -205,7 +210,25 @@ THQ uses a JSON-based WebSocket protocol for communication:
 }
 ```
 
-**Log message:**
+**Location update (server to subscribers):**
+
+```json
+{
+  "id": "unique-id",
+  "type": "location_update",
+  "device": "device-id",
+  "state": "moving",
+  "coords": {
+    "latitude": 35.0,
+    "longitude": 139.0,
+    "accuracy": 5.0,
+    "speed": 10.0
+  },
+  "timestamp": 1234567890
+}
+```
+
+**Log message (client to server):**
 
 ```json
 {
@@ -216,6 +239,34 @@ THQ uses a JSON-based WebSocket protocol for communication:
     "type": "system",
     "level": "info",
     "message": "System operational"
+  }
+}
+```
+
+**Log message (server to subscribers):**
+
+```json
+{
+  "id": "unique-id",
+  "type": "log",
+  "device": "device-id",
+  "timestamp": 1234567890,
+  "log": {
+    "type": "system",
+    "level": "info",
+    "message": "System operational"
+  }
+}
+```
+
+**Error message:**
+
+```json
+{
+  "type": "error",
+  "data": {
+    "type": "json_parse_error",
+    "reason": "Failed to parse JSON: Unexpected token"
   }
 }
 ```

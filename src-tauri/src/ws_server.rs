@@ -64,10 +64,7 @@ async fn handle_connection(
                         app,
                         &TelemetryEvent::Error(ErrorData {
                             r#type: "json_parse_error".to_string(),
-                            raw: serde_json::json!({
-                                "error": format!("JSON parse error: {}", e),
-                                "raw": text,
-                            }),
+                            reason: format!("Failed to parse JSON: {}", e),
                         }),
                     );
                     continue;
@@ -93,10 +90,10 @@ async fn handle_connection(
                                 app,
                                 &TelemetryEvent::Error(ErrorData {
                                     r#type: "payload_parse_error".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Could not parse `device`",
-                                        "raw": value.to_string(),
-                                    }),
+                                    reason: format!(
+                                        "Could not parse `device`: {}",
+                                        value.to_string()
+                                    ),
                                 }),
                             );
                             continue;
@@ -109,10 +106,10 @@ async fn handle_connection(
                                 app,
                                 &TelemetryEvent::Error(ErrorData {
                                     r#type: "payload_parse_error".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Could not parse `state`",
-                                        "raw": value.to_string(),
-                                    }),
+                                    reason: format!(
+                                        "Could not parse `state`: {}",
+                                        value.to_string()
+                                    ),
                                 }),
                             );
                             continue;
@@ -126,10 +123,10 @@ async fn handle_connection(
                                 app,
                                 &TelemetryEvent::Error(ErrorData {
                                     r#type: "payload_parse_error".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Could not parse `coords.latitude`",
-                                        "raw": coords.to_string(),
-                                    }),
+                                    reason: format!(
+                                        "Could not parse `coords.latitude`: {}",
+                                        coords.to_string()
+                                    ),
                                 }),
                             );
                             continue;
@@ -142,10 +139,10 @@ async fn handle_connection(
                                 app,
                                 &TelemetryEvent::Error(ErrorData {
                                     r#type: "payload_parse_error".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Could not parse `coords.longitude`",
-                                        "raw": coords.to_string(),
-                                    }),
+                                    reason: format!(
+                                        "Could not parse `coords.longitude`: {}",
+                                        coords.to_string()
+                                    ),
                                 }),
                             );
                             continue;
@@ -160,10 +157,10 @@ async fn handle_connection(
                                 app,
                                 &TelemetryEvent::Error(ErrorData {
                                     r#type: "payload_parse_error".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Could not parse `timestamp`",
-                                        "raw": value.to_string(),
-                                    }),
+                                    reason: format!(
+                                        "Could not parse `timestamp`: {}",
+                                        value.to_string()
+                                    ),
                                 }),
                             );
                             continue;
@@ -208,10 +205,10 @@ async fn handle_connection(
                                 app,
                                 &TelemetryEvent::Error(ErrorData {
                                     r#type: "payload_parse_error".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Could not parse `device`",
-                                        "raw": value.to_string(),
-                                    }),
+                                    reason: format!(
+                                        "Could not parse `device`: {}",
+                                        value.to_string()
+                                    ),
                                 }),
                             );
                             continue;
@@ -224,10 +221,10 @@ async fn handle_connection(
                                 app,
                                 &TelemetryEvent::Error(ErrorData {
                                     r#type: "payload_parse_error".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Could not parse `timestamp`",
-                                        "raw": value.to_string(),
-                                    }),
+                                    reason: format!(
+                                        "Could not parse `timestamp`: {}",
+                                        value.to_string()
+                                    ),
                                 }),
                             );
                             continue;
@@ -241,10 +238,10 @@ async fn handle_connection(
                                 app,
                                 &TelemetryEvent::Error(ErrorData {
                                     r#type: "payload_parse_error".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Could not parse `log.type`",
-                                        "raw": log_value.to_string(),
-                                    }),
+                                    reason: format!(
+                                        "Could not parse `log.type`: {}",
+                                        log_value.to_string()
+                                    ),
                                 }),
                             );
                             continue;
@@ -257,10 +254,10 @@ async fn handle_connection(
                                 app,
                                 &TelemetryEvent::Error(ErrorData {
                                     r#type: "payload_parse_error".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Could not parse `log.level`",
-                                        "raw": log_value.to_string(),
-                                    }),
+                                    reason: format!(
+                                        "Could not parse `log.level`: {}",
+                                        log_value.to_string()
+                                    ),
                                 }),
                             );
                             continue;
@@ -273,10 +270,10 @@ async fn handle_connection(
                                 app,
                                 &TelemetryEvent::Error(ErrorData {
                                     r#type: "payload_parse_error".to_string(),
-                                    raw: serde_json::json!({
-                                        "error": "Could not parse `log.message`",
-                                        "raw": log_value.to_string(),
-                                    }),
+                                    reason: format!(
+                                        "Could not parse `log.message`: {}",
+                                        log_value.to_string()
+                                    ),
                                 }),
                             );
                             continue;
@@ -286,7 +283,7 @@ async fn handle_connection(
                     (
                         TelemetryEvent::LogUpdate(LogData {
                             id: nanoid::nanoid!(),
-                            r#type: type_value,
+                            r#type: type_value.clone(),
                             timestamp,
                             level: level.clone(),
                             message: message.clone(),
@@ -296,10 +293,13 @@ async fn handle_connection(
                             serde_json::json!({
                                 "id": nanoid::nanoid!(),
                                 "type": "log",
+                                "device": device_id_value,
                                 "timestamp": timestamp,
-                                 "level": level,
-                                 "message": message,
-                                 "device": device_id_value,
+                                "log": {
+                                    "type": type_value,
+                                    "level": level,
+                                    "message": message
+                                }
                             })
                             .to_string()
                             .into(),
@@ -317,12 +317,15 @@ async fn handle_connection(
                     }),
                     Message::Text(
                         serde_json::json!({
-                        "id": nanoid::nanoid!(),
-                        "type": "log",
-                        "timestamp":chrono::Utc::now().timestamp_millis() as u64,
-                        "level": "info",
-                        "message": "New subscriber added.",
-                        "device": "THQ Client",
+                            "id": nanoid::nanoid!(),
+                            "type": "log",
+                            "device": "THQ Client",
+                            "timestamp": chrono::Utc::now().timestamp_millis() as u64,
+                            "log": {
+                                "type": "system",
+                                "level": "info",
+                                "message": "New subscriber added."
+                            }
                         })
                         .to_string()
                         .into(),
@@ -331,10 +334,7 @@ async fn handle_connection(
                 txt => (
                     TelemetryEvent::Error(ErrorData {
                         r#type: "unknown".to_string(),
-                        raw: serde_json::json!({
-                            "error": "Unknown event type",
-                            "raw": txt.unwrap_or_default().to_string(),
-                        }),
+                        reason: format!("Unknown event type: {}", txt.unwrap_or_default()),
                     }),
                     Message::Text(
                         serde_json::json!({

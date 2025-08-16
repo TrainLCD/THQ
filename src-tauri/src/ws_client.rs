@@ -38,7 +38,7 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
                                         &(*app),
                                         &TelemetryEvent::Error(ErrorData {
                                             r#type: "websocket_message_error".to_string(),
-                                            raw: json!({ "error": e.to_string() }),
+                                            reason: format!("Failed to parse message: {}", e),
                                         }),
                                     );
                                     continue;
@@ -52,7 +52,7 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
                                         &(*app),
                                         &TelemetryEvent::Error(ErrorData {
                                             r#type: "json_parse_error".to_string(),
-                                            raw: json!({ "error": e.to_string() }),
+                                            reason: format!("Failed to parse JSON: {}", e),
                                         }),
                                     );
                                     continue;
@@ -157,10 +157,7 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
                                 }
                                 t => TelemetryEvent::Error(ErrorData {
                                     r#type: "unknown".to_string(),
-                                    raw: json!({
-                                        "error": format!("Unknown event type: {}", t),
-                                        "raw": value.to_string(),
-                                    }),
+                                    reason: format!("Unknown event type: {}", t),
                                 }),
                             };
 

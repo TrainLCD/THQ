@@ -43,16 +43,6 @@ function App() {
     return false;
   }, [latestTelemetry?.accuracy]);
 
-  const movingLogs = useMemo(
-    () => telemetryList.slice().sort((a, b) => b.timestamp - a.timestamp),
-    [telemetryList]
-  );
-
-  const sortedConsoleLogs = useMemo(
-    () => consoleLogs.slice().sort((a, b) => b.timestamp - a.timestamp),
-    [consoleLogs]
-  );
-
   const locations = useMemo<LatLngTuple[]>(
     () =>
       telemetryList
@@ -121,8 +111,8 @@ function App() {
 
         <div className="mt-4">
           <h3 className="text-md font-semibold mb-2">Moving Log</h3>
-          {movingLogs.length ? (
-            <MovingLogTable movingLogs={movingLogs} />
+          {telemetryList.length ? (
+            <MovingLogTable movingLogs={telemetryList} />
           ) : (
             <p className="text-gray-500 dark:text-gray-400">
               No moving log data available.
@@ -135,7 +125,7 @@ function App() {
           {error ? (
             <div className="mt-2">
               <p>Error Type: {error.type}</p>
-              <p>Raw Data: {JSON.stringify(error.raw)}</p>
+              <p>Reason: {error.reason}</p>
             </div>
           ) : (
             <p className="text-gray-500 dark:text-gray-400">
@@ -146,8 +136,8 @@ function App() {
 
         <div className="mt-4">
           <h3 className="text-md font-semibold mb-2">Logs</h3>
-          {sortedConsoleLogs.length ? (
-            <ConsoleLogTable logs={sortedConsoleLogs} />
+          {consoleLogs.length ? (
+            <ConsoleLogTable logs={consoleLogs} />
           ) : (
             <p className="text-gray-500 dark:text-gray-400">
               No log data available.
