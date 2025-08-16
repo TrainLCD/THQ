@@ -130,10 +130,10 @@ THQ handles three main types of telemetry events:
 ```typescript
 {
   id: string;
-  lat: number | null;
-  lon: number | null;
+  lat: number;
+  lon: number;
   accuracy: number | null;
-  speed: number | null;
+  speed: number;
   timestamp: number;
   state: "arrived" | "approaching" | "passing" | "moving";
   device: string;
@@ -145,6 +145,7 @@ THQ handles three main types of telemetry events:
 ```typescript
 {
   id: string;
+  type: "system" | "app" | "client";
   timestamp: number;
   level: "debug" | "info" | "warn" | "error";
   message: string;
@@ -156,8 +157,13 @@ THQ handles three main types of telemetry events:
 
 ```typescript
 {
-  type: "accuracy_low" | "invalid_coords" | "unknown";
-  raw: any;
+  type: "websocket_message_error" |
+    "json_parse_error" |
+    "payload_parse_error" |
+    "accuracy_low" |
+    "invalid_coords" |
+    "unknown";
+  reason: string;
 }
 ```
 
@@ -191,6 +197,7 @@ THQ uses a JSON-based WebSocket protocol for communication:
 
 ```json
 {
+  "id": "generated-id",
   "type": "location_update",
   "device": "device-id",
   "state": "moving",
@@ -208,10 +215,12 @@ THQ uses a JSON-based WebSocket protocol for communication:
 
 ```json
 {
+  "id": "generated-id",
   "type": "log",
   "device": "device-id",
   "timestamp": 1234567890,
   "log": {
+    "type": "system",
     "level": "info",
     "message": "System operational"
   }
@@ -230,7 +239,7 @@ THQ implements comprehensive error handling for:
 ## 📊 Performance
 
 - Maintains up to 1,000 telemetry records in memory
-- Automatic deduplication of telemetry data
+- Bounded append with capacity limit (keeps the latest 1,000 entries; no dedup)
 - Efficient real-time updates using Jotai state management
 - Optimized rendering with React.memo and useMemo
 

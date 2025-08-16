@@ -31,14 +31,28 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
                 while let Some(msg_result) = ws_stream.next().await {
                     match msg_result {
                         Ok(msg) => {
-                            let value: Value = match serde_json::from_str(msg.to_text().unwrap()) {
+                            let text = match msg.to_text() {
+                                Ok(t) => t,
+                                Err(e) => {
+                                    emit_event(
+                                        &(*app),
+                                        &TelemetryEvent::Error(ErrorData {
+                                            r#type: "websocket_message_error".to_string(),
+                                            reason: format!("Failed to parse message: {}", e),
+                                        }),
+                                    );
+                                    continue;
+                                }
+                            };
+
+                            let value: Value = match serde_json::from_str(text) {
                                 Ok(v) => v,
                                 Err(e) => {
                                     emit_event(
                                         &(*app),
                                         &TelemetryEvent::Error(ErrorData {
                                             r#type: "json_parse_error".to_string(),
-                                            raw: json!({ "error": e.to_string() }),
+                                            reason: format!("Failed to parse JSON: {}", e),
                                         }),
                                     );
                                     continue;
@@ -49,34 +63,93 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
 
                             let event = match value_type {
                                 "location_update" => {
-                                    let id_value = value["id"].as_str().unwrap();
-                                    let device_id_value = value["device"].as_str().unwrap();
-                                    let state_value = value["state"].as_str().unwrap();
+                                    let id_value = match value.get("id").and_then(Value::as_str) {
+                                        Some(v) => v,
+                                        None => continue,
+                                    };
+                                    let device_id_value =
+                                        match value.get("device").and_then(Value::as_str) {
+                                            Some(v) => v,
+                                            None => continue,
+                                        };
+                                    let state_value =
+                                        match value.get("state").and_then(Value::as_str) {
+                                            Some(v) => v,
+                                            None => continue,
+                                        };
                                     let coords_value = value["coords"].clone();
-                                    let timestamp_value = value["timestamp"].clone();
+                                    let timestamp_value = match value.get("timestamp") {
+                                        Some(v) => v.clone(),
+                                        None => continue,
+                                    };
+
+                                    let lat = match coords_value["latitude"].as_f64() {
+                                        Some(v) => v,
+                                        None => continue,
+                                    };
+                                    let lon = match coords_value["longitude"].as_f64() {
+                                        Some(v) => v,
+                                        None => continue,
+                                    };
+                                    let accuracy = coords_value["accuracy"].as_f64();
+                                    let speed = match coords_value["speed"].as_f64() {
+                                        Some(v) => v,
+                                        None => continue,
+                                    };
+                                    let timestamp = match timestamp_value.as_u64() {
+                                        Some(v) => v,
+                                        None => continue,
+                                    };
 
                                     TelemetryEvent::LocationUpdate(LocationData {
                                         id: id_value.to_string(),
-                                        lat: coords_value["latitude"].as_f64().unwrap(),
-                                        lon: coords_value["longitude"].as_f64().unwrap(),
-                                        accuracy: coords_value["accuracy"].as_f64(),
-                                        speed: coords_value["speed"].as_f64().unwrap(),
+                                        lat,
+                                        lon,
+                                        accuracy,
+                                        speed,
                                         device: device_id_value.to_string(),
                                         state: state_value.to_string(),
-                                        timestamp: timestamp_value.as_u64().unwrap(),
+                                        timestamp,
                                     })
                                 }
                                 "log" => {
-                                    let id_value = value["id"].as_str().unwrap();
-                                    let timestamp_value = value["timestamp"].clone();
-                                    let level_value = value["level"].as_str().unwrap();
-                                    let message_value = value["message"].as_str().unwrap();
-                                    let device_id_value = value["device"].as_str().unwrap();
+                                    let id_value = match value.get("id").and_then(Value::as_str) {
+                                        Some(v) => v,
+                                        None => continue,
+                                    };
+                                    let device_id_value =
+                                        match value.get("device").and_then(Value::as_str) {
+                                            Some(v) => v,
+                                            None => continue,
+                                        };
+                                    let type_value = match value.get("type").and_then(Value::as_str)
+                                    {
+                                        Some(v) => v,
+                                        None => continue,
+                                    };
+                                    let unchecked_timestamp_value = match value.get("timestamp") {
+                                        Some(v) => v.clone().as_u64(),
+                                        None => continue,
+                                    };
+                                    let timestamp_value = match unchecked_timestamp_value {
+                                        Some(v) => v,
+                                        None => continue,
+                                    };
+                                    let level_value =
+                                        match value.get("level").and_then(Value::as_str) {
+                                            Some(v) => v,
+                                            None => continue,
+                                        };
+                                    let message_value =
+                                        match value.get("message").and_then(Value::as_str) {
+                                            Some(v) => v,
+                                            None => continue,
+                                        };
 
                                     TelemetryEvent::LogUpdate(LogData {
                                         id: id_value.to_string(),
-                                        r#type: "log".to_string(),
-                                        timestamp: timestamp_value.as_u64().unwrap(),
+                                        r#type: type_value.to_string(),
+                                        timestamp: timestamp_value,
                                         level: level_value.to_string(),
                                         message: message_value.to_string(),
                                         device: device_id_value.to_string(),
@@ -84,10 +157,7 @@ pub async fn start_ws_client(app: Arc<AppHandle>) {
                                 }
                                 t => TelemetryEvent::Error(ErrorData {
                                     r#type: "unknown".to_string(),
-                                    raw: json!({
-                                        "error": format!("Unknown event type: {}", t),
-                                        "raw": value.to_string(),
-                                    }),
+                                    reason: format!("Unknown event type: {}", t),
                                 }),
                             };
 

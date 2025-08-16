@@ -26,7 +26,7 @@ pub struct LocationData {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorData {
     pub r#type: String,
-    pub raw: serde_json::Value,
+    pub reason: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

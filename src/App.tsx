@@ -12,7 +12,7 @@ import type { LocationData } from "./domain/commands";
 import { BAD_ACCURACY_THRESHOLD } from "./domain/threshold";
 
 function App() {
-  const { telemetryList, error, consoleLogs, isLocalServerAvailable } =
+  const { telemetryList, error, consoleLogs, isLocalServerEnabled } =
     useTelemetry();
 
   const latestTelemetry = useMemo(
@@ -37,21 +37,21 @@ function App() {
     );
   }, [telemetryList]);
 
+  const movingLogs = useMemo(
+    () => telemetryList.slice().reverse(),
+    [telemetryList]
+  );
+
+  const sortedConsoleLogs = useMemo(
+    () => consoleLogs.slice().reverse(),
+    [consoleLogs]
+  );
+
   const badAccuracy = useMemo(() => {
     if (latestTelemetry?.accuracy === null) return false;
     if (latestTelemetry?.accuracy > BAD_ACCURACY_THRESHOLD) return true;
     return false;
   }, [latestTelemetry?.accuracy]);
-
-  const movingLogs = useMemo(
-    () => telemetryList.slice().sort((a, b) => b.timestamp - a.timestamp),
-    [telemetryList]
-  );
-
-  const sortedConsoleLogs = useMemo(
-    () => consoleLogs.slice().sort((a, b) => b.timestamp - a.timestamp),
-    [consoleLogs]
-  );
 
   const locations = useMemo<LatLngTuple[]>(
     () =>
@@ -86,8 +86,8 @@ function App() {
       <header className="p-4 bg-white dark:bg-black/30 backdrop-blur-md shadow-sm border-b border-gray-200 dark:border-white/15 sticky top-0 z-9999 w-full select-none cursor-default">
         <h1 className="font-bold">
           TrainLCD THQ
-          {isLocalServerAvailable !== null ? (
-            <span>({isLocalServerAvailable ? "Server" : "Client"})</span>
+          {isLocalServerEnabled !== null ? (
+            <span>({isLocalServerEnabled ? "Server" : "Client"})</span>
           ) : (
             <></>
           )}
@@ -135,7 +135,7 @@ function App() {
           {error ? (
             <div className="mt-2">
               <p>Error Type: {error.type}</p>
-              <p>Raw Data: {JSON.stringify(error.raw)}</p>
+              <p>Reason: {error.reason}</p>
             </div>
           ) : (
             <p className="text-gray-500 dark:text-gray-400">
