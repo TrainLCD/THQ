@@ -11,7 +11,7 @@ import {
 import { isLocalServerEnabledAsync } from "~/utils/server";
 
 export const useTelemetry = () => {
-  const [isLocalServerAvailable, setIsLocalServerAvailable] = useState(false);
+  const [isLocalServerEnabled, setisLocalServerEnabled] = useState(false);
   const [error, setError] = useState<ErrorData | null>(null);
   const [consoleLogs, setConsoleLogs] = useState<LogData[]>([]);
   const [telemetryList, setTelemetryList] = useAtom(telemetryListAtom);
@@ -35,7 +35,7 @@ export const useTelemetry = () => {
     const updateServerAvailabilityAsync = async () => {
       try {
         const avail = await isLocalServerEnabledAsync();
-        if (!disposed) setIsLocalServerAvailable(avail);
+        if (!disposed) setisLocalServerEnabled(avail);
       } catch (e) {
         console.error("Failed to check local server availability", e);
         if (!disposed)
@@ -84,6 +84,6 @@ export const useTelemetry = () => {
     telemetryList,
     error,
     consoleLogs,
-    isLocalServerAvailable,
+    isLocalServerEnabled,
   };
 };

@@ -12,7 +12,7 @@ import type { LocationData } from "./domain/commands";
 import { BAD_ACCURACY_THRESHOLD } from "./domain/threshold";
 
 function App() {
-  const { telemetryList, error, consoleLogs, isLocalServerAvailable } =
+  const { telemetryList, error, consoleLogs, isLocalServerEnabled } =
     useTelemetry();
 
   const latestTelemetry = useMemo(
@@ -86,8 +86,8 @@ function App() {
       <header className="p-4 bg-white dark:bg-black/30 backdrop-blur-md shadow-sm border-b border-gray-200 dark:border-white/15 sticky top-0 z-9999 w-full select-none cursor-default">
         <h1 className="font-bold">
           TrainLCD THQ
-          {isLocalServerAvailable !== null ? (
-            <span>({isLocalServerAvailable ? "Server" : "Client"})</span>
+          {isLocalServerEnabled !== null ? (
+            <span>({isLocalServerEnabled ? "Server" : "Client"})</span>
           ) : (
             <></>
           )}
