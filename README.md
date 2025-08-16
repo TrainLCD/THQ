@@ -283,7 +283,7 @@ THQ implements comprehensive error handling for:
 ## 📊 Performance
 
 - Maintains up to 1,000 telemetry records in memory
-- Automatic deduplication of telemetry data
+- Bounded append with capacity limit (keeps the latest 1,000 entries; no dedup)
 - Efficient real-time updates using Jotai state management
 - Optimized rendering with React.memo and useMemo
 
