@@ -16,41 +16,44 @@ export const useTelemetry = () => {
   const [consoleLogs, setConsoleLogs] = useState<LogData[]>([]);
   const [telemetryList, setTelemetryList] = useAtom(telemetryListAtom);
 
-  const handleLocationUpdate = useCallback(
-    (data: LocationData) => {
-      setTelemetryList((prev) => {
-        const filtered = prev.filter((x) => x.id !== data.id);
-        // 最大1,000件に制限してメモリ使用量を管理（重複は最新を優先）
-        return [...filtered, { ...data }].slice(-1000);
-      });
-    },
+  const handleReceivedLocationUpdate = useCallback(
+    (data: LocationData) =>
+      setTelemetryList((prev) => [...prev, data].slice(-1000)),
     [setTelemetryList]
+  );
+  const handleReceivedError = useCallback(
+    (err: ErrorData) => setError(err),
+    []
+  );
+  const handleReceivedLog = useCallback(
+    (data: LogData) => setConsoleLogs((prev) => [...prev, data].slice(-1000)),
+    []
   );
 
   useEffect(() => {
+    let disposed = false;
     const updateServerAvailabilityAsync = async () => {
       try {
-        setIsLocalServerAvailable(await isLocalServerEnabledAsync());
+        const avail = await isLocalServerEnabledAsync();
+        if (!disposed) setIsLocalServerAvailable(avail);
       } catch (e) {
         console.error("Failed to check local server availability", e);
-        setError({ type: "unknown", raw: e });
+        if (!disposed) setError({ type: "unknown", raw: e });
       }
     };
     updateServerAvailabilityAsync();
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   useEffect(() => {
     let disposed = false;
     let unlisten: UnlistenFn | undefined;
     registerTelemetryListener({
-      onLocationUpdate: handleLocationUpdate,
-      onError: (err) => setError(err),
-      onLog: (log) =>
-        setConsoleLogs((prev) => {
-          const filtered = prev.filter((x) => x.id !== log.id);
-          // コンソールログも最大1,000件に制限（重複は最新を優先）
-          return [...filtered, log].slice(-1000);
-        }),
+      onLocationUpdate: handleReceivedLocationUpdate,
+      onError: handleReceivedError,
+      onLog: handleReceivedLog,
     })
       .then((fn) => {
         if (disposed) {
@@ -61,13 +64,13 @@ export const useTelemetry = () => {
       })
       .catch((e) => {
         console.error("Failed to register telemetry listener", e);
-        setError({ type: "unknown", raw: e });
+        if (!disposed) setError({ type: "unknown", raw: e });
       });
     return () => {
       disposed = true;
       unlisten?.();
     };
-  }, [handleLocationUpdate]);
+  }, [handleReceivedLocationUpdate, handleReceivedError, handleReceivedLog]);
 
   return {
     telemetryList,
