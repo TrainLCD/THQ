@@ -30,7 +30,10 @@ export type ErrorData = z.infer<typeof ErrorData>;
 
 export const LogData = z.object({
   id: z.string(),
-  type: z.enum(["system", "app"]).optional(),
+  // system: THQサーバーが発行したログ
+  // app: TrainLCDアプリが発行したログ
+  // client: THQクライアントが発行したログ
+  type: z.enum(["system", "app", "client"]).optional(),
   timestamp: z.number(),
   level: z.enum(["debug", "info", "warn", "error"]),
   message: z.string(),
