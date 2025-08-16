@@ -53,7 +53,19 @@ async fn handle_connection(
         if let Ok(text) = msg.to_text() {
             let value: Value = match serde_json::from_str(text) {
                 Ok(v) => v,
-                Err(_) => continue, // JSONパースエラーの場合は次のメッセージを処理
+                Err(e) => {
+                    emit_event(
+                        app,
+                        &TelemetryEvent::Error(ErrorData {
+                            r#type: "json_parse_error".to_string(),
+                            raw: serde_json::json!({
+                                "error": format!("JSON parse error: {}", e),
+                                "raw": text,
+                            }),
+                        }),
+                    );
+                    continue;
+                }
             };
 
             if let Some("subscribe") = value["type"].as_str() {
