@@ -157,7 +157,7 @@ async fn handle_connection(
                         Message::Text(
                             serde_json::json!({
                                 "id": nanoid::nanoid!(),
-                                "type": "log".to_string(),
+                                "type": "log",
                                 "timestamp": timestamp,
                                  "level": level,
                                  "message": message,
@@ -180,11 +180,11 @@ async fn handle_connection(
                     Message::Text(
                         serde_json::json!({
                         "id": nanoid::nanoid!(),
-                        "type": "log".to_string(),
+                        "type": "log",
                         "timestamp":chrono::Utc::now().timestamp_millis() as u64,
-                        "level": "info".to_string(),
-                        "message": "New subscriber added.".to_string(),
-                        "device": "THQ Client".to_string(),
+                        "level": "info",
+                        "message": "New subscriber added.",
+                        "device": "THQ Client",
                         })
                         .to_string()
                         .into(),
