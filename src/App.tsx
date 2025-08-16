@@ -37,6 +37,16 @@ function App() {
     );
   }, [telemetryList]);
 
+  const movingLogs = useMemo(
+    () => telemetryList.slice().reverse(),
+    [telemetryList]
+  );
+
+  const sortedConsoleLogs = useMemo(
+    () => consoleLogs.slice().reverse(),
+    [consoleLogs]
+  );
+
   const badAccuracy = useMemo(() => {
     if (latestTelemetry?.accuracy === null) return false;
     if (latestTelemetry?.accuracy > BAD_ACCURACY_THRESHOLD) return true;
@@ -111,8 +121,8 @@ function App() {
 
         <div className="mt-4">
           <h3 className="text-md font-semibold mb-2">Moving Log</h3>
-          {telemetryList.length ? (
-            <MovingLogTable movingLogs={telemetryList} />
+          {movingLogs.length ? (
+            <MovingLogTable movingLogs={movingLogs} />
           ) : (
             <p className="text-gray-500 dark:text-gray-400">
               No moving log data available.
@@ -136,8 +146,8 @@ function App() {
 
         <div className="mt-4">
           <h3 className="text-md font-semibold mb-2">Logs</h3>
-          {consoleLogs.length ? (
-            <ConsoleLogTable logs={consoleLogs} />
+          {sortedConsoleLogs.length ? (
+            <ConsoleLogTable logs={sortedConsoleLogs} />
           ) : (
             <p className="text-gray-500 dark:text-gray-400">
               No log data available.
