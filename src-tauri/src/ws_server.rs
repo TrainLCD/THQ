@@ -388,6 +388,7 @@ pub async fn start_ws_server(app: Arc<AppHandle>) -> anyhow::Result<()> {
             for (_, subs) in st.subscribers.iter_mut() {
                 subs.retain(|_, tx| !tx.is_closed());
             }
+            st.subscribers.retain(|_, subs| !subs.is_empty());
         }
     });
 
