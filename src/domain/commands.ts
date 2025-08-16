@@ -60,7 +60,13 @@ export function registerTelemetryListener(handlers: {
   onLog?: (log: LogData) => void;
 }) {
   return listen<TelemetryEvent>("telemetry", (event) => {
-    const payload = event.payload;
+    const parsedEvent = TelemetryEvent.safeParse(event.payload);
+    if (!parsedEvent.success) {
+      console.error("Invalid telemetry event", parsedEvent.error);
+      handlers.onError?.({ type: "unknown", raw: parsedEvent.error });
+      return;
+    }
+    const payload = parsedEvent.data;
 
     switch (payload.type) {
       case "location_update": {
@@ -76,9 +82,17 @@ export function registerTelemetryListener(handlers: {
         });
         break;
       }
-      case "error":
-        handlers.onError?.(payload.data);
+      case "error": {
+        const parsed = ErrorData.safeParse(payload.data);
+        if (parsed.success) {
+          handlers.onError?.(parsed.data);
+          return;
+        }
+        console.error("Invalid error data", parsed.error);
+        handlers.onError?.({ type: "unknown", raw: parsed.error });
         break;
+      }
+
       case "log": {
         const parsed = LogData.safeParse(payload.data);
         if (parsed.success) {
