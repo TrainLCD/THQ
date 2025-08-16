@@ -22,7 +22,14 @@ export const LocationData = z.object({
 export type LocationData = z.infer<typeof LocationData>;
 
 export const ErrorData = z.object({
-  type: z.enum(["accuracy_low", "invalid_coords", "unknown"]),
+  type: z.enum([
+    "websocket_message_error",
+    "json_parse_error",
+    "payload_parse_error",
+    "accuracy_low",
+    "invalid_coords",
+    "unknown",
+  ]),
   // TODO: 後で考える
   raw: z.unknown(),
 });
@@ -66,7 +73,10 @@ export function registerTelemetryListener(handlers: {
     const parsedEvent = TelemetryEvent.safeParse(event.payload);
     if (!parsedEvent.success) {
       console.error("Invalid telemetry event", parsedEvent.error);
-      handlers.onError?.({ type: "unknown", raw: parsedEvent.error });
+      handlers.onError?.({
+        type: "payload_parse_error",
+        raw: parsedEvent.error,
+      });
       return;
     }
     const payload = parsedEvent.data;
