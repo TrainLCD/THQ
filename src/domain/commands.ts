@@ -34,7 +34,7 @@ export const LogData = z.object({
   // app: TrainLCDアプリが発行したログ
   // client: THQクライアントが発行したログ
   type: z.enum(["system", "app", "client"]).optional(),
-  timestamp: z.number(),
+  timestamp: z.number().int().nonnegative(),
   level: z.enum(["debug", "info", "warn", "error"]),
   message: z.string(),
   device: z.string(),
@@ -62,7 +62,7 @@ export function registerTelemetryListener(handlers: {
   onError?: (error: ErrorData) => void;
   onLog?: (log: LogData) => void;
 }) {
-  return listen<TelemetryEvent>("telemetry", (event) => {
+  return listen<unknown>("telemetry", (event) => {
     const parsedEvent = TelemetryEvent.safeParse(event.payload);
     if (!parsedEvent.success) {
       console.error("Invalid telemetry event", parsedEvent.error);
@@ -70,45 +70,16 @@ export function registerTelemetryListener(handlers: {
       return;
     }
     const payload = parsedEvent.data;
-
     switch (payload.type) {
-      case "location_update": {
-        const parsed = LocationData.safeParse(payload.data);
-        if (parsed.success) {
-          handlers.onLocationUpdate?.(parsed.data);
-          return;
-        }
-        console.error("Invalid location data", parsed.error);
-        handlers.onError?.({
-          type: "unknown",
-          raw: parsed.error,
-        });
-        break;
-      }
-      case "error": {
-        const parsed = ErrorData.safeParse(payload.data);
-        if (parsed.success) {
-          handlers.onError?.(parsed.data);
-          return;
-        }
-        console.error("Invalid error data", parsed.error);
-        handlers.onError?.({ type: "unknown", raw: parsed.error });
-        break;
-      }
-
-      case "log": {
-        const parsed = LogData.safeParse(payload.data);
-        if (parsed.success) {
-          handlers.onLog?.(parsed.data);
-          return;
-        }
-        console.error("Invalid log data", parsed.error);
-        handlers.onError?.({
-          type: "unknown",
-          raw: parsed.error,
-        });
-        break;
-      }
+      case "location_update":
+        handlers.onLocationUpdate?.(payload.data);
+        return;
+      case "error":
+        handlers.onError?.(payload.data);
+        return;
+      case "log":
+        handlers.onLog?.(payload.data);
+        return;
     }
   });
 }
