@@ -70,26 +70,86 @@ async fn handle_connection(
                 Some("location_update") => {
                     let device_id = match value.get("device").and_then(Value::as_str) {
                         Some(v) => v.to_string(),
-                        None => continue,
+                        None => {
+                            emit_event(
+                                app,
+                                &TelemetryEvent::Error(ErrorData {
+                                    r#type: "payload_parse_error".to_string(),
+                                    raw: serde_json::json!({
+                                        "error": "Could not parse `device`",
+                                        "raw": value.to_string(),
+                                    }),
+                                }),
+                            );
+                            continue;
+                        }
                     };
                     let moving_state = match value.get("state").and_then(Value::as_str) {
                         Some(v) => v.to_string(),
-                        None => continue,
+                        None => {
+                            emit_event(
+                                app,
+                                &TelemetryEvent::Error(ErrorData {
+                                    r#type: "payload_parse_error".to_string(),
+                                    raw: serde_json::json!({
+                                        "error": "Could not parse `state`",
+                                        "raw": value.to_string(),
+                                    }),
+                                }),
+                            );
+                            continue;
+                        }
                     };
                     let coords = &value["coords"];
                     let lat = match coords.get("latitude").and_then(Value::as_f64) {
                         Some(v) => v,
-                        None => continue,
+                        None => {
+                            emit_event(
+                                app,
+                                &TelemetryEvent::Error(ErrorData {
+                                    r#type: "payload_parse_error".to_string(),
+                                    raw: serde_json::json!({
+                                        "error": "Could not parse `coords.latitude`",
+                                        "raw": coords.to_string(),
+                                    }),
+                                }),
+                            );
+                            continue;
+                        }
                     };
                     let lon = match coords.get("longitude").and_then(Value::as_f64) {
                         Some(v) => v,
-                        None => continue,
+                        None => {
+                            emit_event(
+                                app,
+                                &TelemetryEvent::Error(ErrorData {
+                                    r#type: "payload_parse_error".to_string(),
+                                    raw: serde_json::json!({
+                                        "error": "Could not parse `coords.longitude`",
+                                        "raw": coords.to_string(),
+                                    }),
+                                }),
+                            );
+                            continue;
+                        }
                     };
                     let accuracy = coords.get("accuracy").and_then(Value::as_f64);
                     let speed = coords.get("speed").and_then(Value::as_f64).unwrap_or(0.0); // 欠損時は 0.0 を既定値とする
                     let timestamp = match value.get("timestamp").and_then(Value::as_u64) {
                         Some(v) => v,
-                        None => continue,
+                        None => {
+                            emit_event(
+                                app,
+                                &TelemetryEvent::Error(ErrorData {
+                                    r#type: "payload_parse_error".to_string(),
+                                    raw: serde_json::json!({
+                                        "error": "Could not parse `timestamp`",
+                                        "raw": value.to_string(),
+                                    }),
+                                }),
+                            );
+                            continue;
+                        }
                     };
 
                     (
@@ -125,24 +185,84 @@ async fn handle_connection(
                 Some("log") => {
                     let device_id_value = match value.get("device").and_then(Value::as_str) {
                         Some(v) => v.to_string(),
-                        None => continue,
+                        None => {
+                            emit_event(
+                                app,
+                                &TelemetryEvent::Error(ErrorData {
+                                    r#type: "payload_parse_error".to_string(),
+                                    raw: serde_json::json!({
+                                        "error": "Could not parse `device`",
+                                        "raw": value.to_string(),
+                                    }),
+                                }),
+                            );
+                            continue;
+                        }
                     };
                     let timestamp = match value.get("timestamp").and_then(Value::as_u64) {
                         Some(v) => v,
-                        None => continue,
+                        None => {
+                            emit_event(
+                                app,
+                                &TelemetryEvent::Error(ErrorData {
+                                    r#type: "payload_parse_error".to_string(),
+                                    raw: serde_json::json!({
+                                        "error": "Could not parse `timestamp`",
+                                        "raw": value.to_string(),
+                                    }),
+                                }),
+                            );
+                            continue;
+                        }
                     };
                     let log_value = &value["log"];
                     let type_value = match log_value.get("type").and_then(Value::as_str) {
-                        Some(v) => v.to_string(),     // "system" | "app" | "client"
-                        None => "system".to_string(), // 既定値を設定
+                        Some(v) => v.to_string(), // "system" | "app" | "client"
+                        None => {
+                            emit_event(
+                                app,
+                                &TelemetryEvent::Error(ErrorData {
+                                    r#type: "payload_parse_error".to_string(),
+                                    raw: serde_json::json!({
+                                        "error": "Could not parse `log.type`",
+                                        "raw": log_value.to_string(),
+                                    }),
+                                }),
+                            );
+                            continue;
+                        }
                     };
                     let level = match log_value.get("level").and_then(Value::as_str) {
                         Some(v) => v.to_string(),
-                        None => continue,
+                        None => {
+                            emit_event(
+                                app,
+                                &TelemetryEvent::Error(ErrorData {
+                                    r#type: "payload_parse_error".to_string(),
+                                    raw: serde_json::json!({
+                                        "error": "Could not parse `log.level`",
+                                        "raw": log_value.to_string(),
+                                    }),
+                                }),
+                            );
+                            continue;
+                        }
                     };
                     let message = match log_value.get("message").and_then(Value::as_str) {
                         Some(v) => v.to_string(),
-                        None => continue,
+                        None => {
+                            emit_event(
+                                app,
+                                &TelemetryEvent::Error(ErrorData {
+                                    r#type: "payload_parse_error".to_string(),
+                                    raw: serde_json::json!({
+                                        "error": "Could not parse `log.message`",
+                                        "raw": log_value.to_string(),
+                                    }),
+                                }),
+                            );
+                            continue;
+                        }
                     };
 
                     (
