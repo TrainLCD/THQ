@@ -144,7 +144,7 @@ async fn handle_connection(
                     (
                         TelemetryEvent::LogUpdate(LogData {
                             id: nanoid::nanoid!(),
-                            r#type: "log".to_string(),
+                            r#type: "system".to_string(),
                             timestamp,
                             level: level.clone(),
                             message: message.clone(),
@@ -167,7 +167,7 @@ async fn handle_connection(
                 Some("subscribe") => (
                     TelemetryEvent::LogUpdate(LogData {
                         id: nanoid::nanoid!(),
-                        r#type: "log".to_string(),
+                        r#type: "system".to_string(),
                         timestamp: chrono::Utc::now().timestamp_millis() as u64,
                         level: "info".to_string(),
                         message: "New subscriber added.".to_string(),

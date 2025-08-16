@@ -145,6 +145,7 @@ THQ handles three main types of telemetry events:
 ```typescript
 {
   id: string;
+  type: "system";
   timestamp: number;
   level: "debug" | "info" | "warn" | "error";
   message: string;
@@ -212,6 +213,7 @@ THQ uses a JSON-based WebSocket protocol for communication:
   "device": "device-id",
   "timestamp": 1234567890,
   "log": {
+    "type": "system",
     "level": "info",
     "message": "System operational"
   }

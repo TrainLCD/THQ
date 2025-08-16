@@ -11,11 +11,11 @@ export type MovingState = z.infer<typeof MovingState>;
 
 export const LocationData = z.object({
   id: z.string(),
-  lat: z.number().nullable(),
-  lon: z.number().nullable(),
-  accuracy: z.number().nullable(),
-  speed: z.number().nullable(),
-  timestamp: z.number(),
+  lat: z.number().finite().min(-90).max(90).nullable(),
+  lon: z.number().finite().min(-180).max(180).nullable(),
+  accuracy: z.number().finite().nonnegative().nullable(),
+  speed: z.number().finite().nonnegative().nullable(),
+  timestamp: z.number().int().nonnegative(),
   state: MovingState,
   device: z.string(),
 });
@@ -24,13 +24,13 @@ export type LocationData = z.infer<typeof LocationData>;
 export const ErrorData = z.object({
   type: z.enum(["accuracy_low", "invalid_coords", "unknown"]),
   // TODO: 後で考える
-  raw: z.any(),
+  raw: z.unknown(),
 });
 export type ErrorData = z.infer<typeof ErrorData>;
 
 export const LogData = z.object({
   id: z.string(),
-  type: z.enum(["log"]),
+  type: z.enum(["system"]).optional(),
   timestamp: z.number(),
   level: z.enum(["debug", "info", "warn", "error"]),
   message: z.string(),
