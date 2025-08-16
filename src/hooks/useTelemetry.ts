@@ -18,7 +18,7 @@ export const useTelemetry = () => {
 
   const handleReceivedLocationUpdate = useCallback(
     (data: LocationData) =>
-      setTelemetryList((prev) => [...prev, data].slice(-1000)),
+      setTelemetryList((prev) => [data, ...prev].slice(0, 1000)),
     [setTelemetryList]
   );
   const handleReceivedError = useCallback(
@@ -26,7 +26,7 @@ export const useTelemetry = () => {
     []
   );
   const handleReceivedLog = useCallback(
-    (data: LogData) => setConsoleLogs((prev) => [...prev, data].slice(-1000)),
+    (data: LogData) => setConsoleLogs((prev) => [data, ...prev].slice(0, 1000)),
     []
   );
 
