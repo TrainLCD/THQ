@@ -15,7 +15,7 @@ export const LocationData = z
     lat: z.number().finite().min(-90).max(90).nullable(),
     lon: z.number().finite().min(-180).max(180).nullable(),
     accuracy: z.number().finite().nonnegative().nullable(),
-    speed: z.number().finite().nonnegative().nullable(),
+    speed: z.number().finite().nullable(),
     timestamp: z.number().int().nonnegative(),
     state: MovingState,
     device: z.string(),
