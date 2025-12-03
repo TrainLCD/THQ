@@ -1,0 +1,34 @@
+services:
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://thq:thq@db:5432/thq
+      # RUST_LOG: debug,thq_server=debug
+      RUST_BACKTRACE: 1
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: thq
+      POSTGRES_PASSWORD: thq
+      POSTGRES_DB: thq
+      # PGDATA defaults to /var/lib/postgresql/18/main in 18+ images
+    ports:
+      - "5432:5432"
+    volumes:
+      # Mount the whole postgres directory to keep the new versioned layout
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U thq -d thq"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  db-data:

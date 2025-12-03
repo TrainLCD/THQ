@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use sqlx::{postgres::PgPoolOptions, PgPool};
+use tracing::info;
 
 use crate::domain::{LogLevel, LogType, MovementState, OutgoingLocation, OutgoingLog};
 
@@ -16,6 +17,8 @@ impl Storage {
             return Ok(Self { pool: None });
         };
 
+        info!(db_url = %mask_password(&url), "connecting to PostgreSQL");
+
         let pool = PgPoolOptions::new()
             .max_connections(5)
             .min_connections(1)
@@ -26,6 +29,7 @@ impl Storage {
 
         let storage = Self { pool: Some(pool) };
         storage.prepare().await?;
+        info!("PostgreSQL connection established; schema ready");
         Ok(storage)
     }
 
@@ -144,4 +148,15 @@ fn log_type_str(ty: &LogType) -> &'static str {
 
 fn log_level_str(level: &LogLevel) -> &'static str {
     level.as_str()
+}
+
+fn mask_password(url: &str) -> String {
+    if let Some(pos) = url.find("@") {
+        if let Some(prefix_end) = url[..pos].find("://") {
+            let start = prefix_end + 3;
+            let redacted = "***";
+            return format!("{}{}{}", &url[..start], redacted, &url[pos..]);
+        }
+    }
+    url.to_string()
 }

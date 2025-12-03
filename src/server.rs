@@ -389,15 +389,24 @@ fn now_millis() -> u64 {
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            tracing::warn!(?err, "failed to install ctrl+c handler; ignoring");
+            futures::future::pending::<()>().await;
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
         use tokio::signal::unix::{signal, SignalKind};
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("could not install SIGTERM handler");
-        sigterm.recv().await;
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                sigterm.recv().await;
+            }
+            Err(err) => {
+                tracing::warn!(?err, "failed to install SIGTERM handler; ignoring");
+                futures::future::pending::<()>().await;
+            }
+        }
     };
 
     #[cfg(not(unix))]
