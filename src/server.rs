@@ -374,3 +374,129 @@ async fn shutdown_signal() {
 
     tracing::info!("shutdown signal received");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::ws::Message;
+    use serde_json::Value;
+    use tokio::sync::mpsc;
+    use uuid::Uuid;
+
+    #[test]
+    fn normalize_location_rejects_non_finite_accuracy() {
+        let res = normalize_location(
+            None,
+            "dev".to_string(),
+            MovementState::Moving,
+            Coords {
+                latitude: 35.0,
+                longitude: 139.0,
+                accuracy: Some(f64::NAN),
+                speed: Some(10.0),
+            },
+            1,
+        );
+
+        let ValidationError(_, msg) = res.expect_err("expected validation error");
+        assert_eq!(msg, "accuracy must be finite");
+    }
+
+    #[test]
+    fn normalize_location_rejects_negative_accuracy() {
+        let res = normalize_location(
+            None,
+            "dev".to_string(),
+            MovementState::Moving,
+            Coords {
+                latitude: 35.0,
+                longitude: 139.0,
+                accuracy: Some(-1.0),
+                speed: Some(10.0),
+            },
+            1,
+        );
+
+        let ValidationError(_, msg) = res.expect_err("expected validation error");
+        assert_eq!(msg, "accuracy must be >= 0");
+    }
+
+    #[tokio::test]
+    async fn handle_text_sends_json_parse_error() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let (tx, mut rx) = mpsc::channel(4);
+        let mut subscribed = false;
+
+        handle_text("not-json", &hub, &tx, Uuid::new_v4(), &mut subscribed)
+            .await
+            .unwrap();
+
+        let msg = rx.recv().await.expect("expected error message");
+        let Message::Text(text) = msg else {
+            panic!("expected text frame");
+        };
+        let v: Value = serde_json::from_str(&text).expect("valid json in error payload");
+        assert_eq!(v["type"], "error");
+        assert_eq!(v["error"]["type"], "json_parse_error");
+    }
+
+    #[tokio::test]
+    async fn location_update_is_broadcast_and_buffered() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let (tx, _rx) = mpsc::channel(4);
+        let mut subscribed = false;
+
+        let payload = serde_json::json!({
+            "type": "location_update",
+            "device": "dev",
+            "state": "moving",
+            "coords": {
+                "latitude": 35.0,
+                "longitude": 139.0,
+                "accuracy": 5.0,
+                "speed": 12.0
+            },
+            "timestamp": 123
+        })
+        .to_string();
+
+        handle_text(&payload, &hub, &tx, Uuid::new_v4(), &mut subscribed)
+            .await
+            .unwrap();
+
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let v: Value = serde_json::from_str(&snapshot[0]).expect("broadcast must be valid json");
+        assert_eq!(v["type"], "location_update");
+        assert_eq!(v["device"], "dev");
+    }
+
+    #[tokio::test]
+    async fn log_message_is_broadcast_and_buffered() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let (tx, _rx) = mpsc::channel(4);
+        let mut subscribed = false;
+
+        let payload = serde_json::json!({
+            "type": "log",
+            "device": "dev",
+            "timestamp": 123,
+            "log": {
+                "type": "system",
+                "level": "info",
+                "message": "ok"
+            }
+        })
+        .to_string();
+
+        handle_text(&payload, &hub, &tx, Uuid::new_v4(), &mut subscribed)
+            .await
+            .unwrap();
+
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let v: Value = serde_json::from_str(&snapshot[0]).expect("broadcast must be valid json");
+        assert_eq!(v["type"], "log");
+        assert_eq!(v["log"]["message"], "ok");
+    }
+}

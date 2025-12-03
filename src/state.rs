@@ -72,3 +72,36 @@ impl TelemetryHub {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn broadcast_reaches_active_subscriber() {
+        let hub = TelemetryHub::new(10);
+        let (tx, mut rx) = mpsc::channel(4);
+        let client_id = Uuid::new_v4();
+        hub.add_subscriber(client_id, tx).await;
+
+        hub.broadcast("hello".to_string()).await;
+
+        let msg = rx.recv().await.expect("message should arrive");
+        match msg {
+            Message::Text(t) => assert_eq!(t, "hello"),
+            _ => panic!("expected text message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ring_buffer_drops_oldest_when_full() {
+        let hub = TelemetryHub::new(2);
+        hub.broadcast("one".to_string()).await;
+        hub.broadcast("two".to_string()).await;
+        hub.broadcast("three".to_string()).await;
+
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot, vec!["two".to_string(), "three".to_string()]);
+    }
+}

@@ -71,3 +71,72 @@ impl Config {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, time::Duration};
+    use uuid::Uuid;
+
+    fn tmp_path(name: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("{}_{}.toml", name, Uuid::new_v4()));
+        p
+    }
+
+    #[test]
+    fn defaults_are_used_when_no_cli_or_file() {
+        let cfg = Config::from_cli(Cli {
+            host: None,
+            port: None,
+            config: None,
+            ring_size: None,
+        })
+        .unwrap();
+
+        assert_eq!(cfg.host, "0.0.0.0");
+        assert_eq!(cfg.port, 8080);
+        assert_eq!(cfg.ring_size, 1000);
+    }
+
+    #[test]
+    fn file_values_are_loaded() {
+        let path = tmp_path("config_file_values");
+        fs::write(&path, "host = '127.0.0.1'\nport = 9000\nring_size = 50").unwrap();
+
+        let cfg = Config::from_cli(Cli {
+            host: None,
+            port: None,
+            config: Some(path.clone()),
+            ring_size: None,
+        })
+        .unwrap();
+
+        assert_eq!(cfg.host, "127.0.0.1");
+        assert_eq!(cfg.port, 9000);
+        assert_eq!(cfg.ring_size, 50);
+
+        // best-effort cleanup
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn cli_overrides_file() {
+        let path = tmp_path("config_cli_override");
+        fs::write(&path, "host = '0.0.0.0'\nport = 8080\nring_size = 10").unwrap();
+
+        let cfg = Config::from_cli(Cli {
+            host: Some("127.0.0.1".into()),
+            port: Some(7000),
+            config: Some(path.clone()),
+            ring_size: Some(5),
+        })
+        .unwrap();
+
+        assert_eq!(cfg.host, "127.0.0.1");
+        assert_eq!(cfg.port, 7000);
+        assert_eq!(cfg.ring_size, 5);
+
+        let _ = fs::remove_file(path);
+    }
+}

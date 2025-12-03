@@ -119,3 +119,41 @@ pub enum ErrorType {
     InvalidCoords,
     Unknown,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn incoming_subscribe_deserializes() {
+        let json = r#"{"type":"subscribe","device":"dev"}"#;
+        let v: IncomingMessage = serde_json::from_str(json).unwrap();
+        match v {
+            IncomingMessage::Subscribe { device } => {
+                assert_eq!(device.as_deref(), Some("dev"));
+            }
+            _ => panic!("expected subscribe variant"),
+        }
+    }
+
+    #[test]
+    fn outgoing_location_has_type_field() {
+        let msg = OutgoingMessage::LocationUpdate(OutgoingLocation {
+            id: "id1".into(),
+            device: "dev".into(),
+            state: MovementState::Moving,
+            coords: OutgoingCoords {
+                latitude: 1.0,
+                longitude: 2.0,
+                accuracy: None,
+                speed: 3.0,
+            },
+            timestamp: 42,
+        });
+
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["type"], "location_update");
+        assert_eq!(json["device"], "dev");
+        assert_eq!(json["coords"]["speed"], 3.0);
+    }
+}
