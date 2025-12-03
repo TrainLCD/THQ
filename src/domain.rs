@@ -9,6 +9,17 @@ pub enum MovementState {
     Moving,
 }
 
+impl MovementState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MovementState::Arrived => "arrived",
+            MovementState::Approaching => "approaching",
+            MovementState::Passing => "passing",
+            MovementState::Moving => "moving",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LogLevel {
@@ -18,12 +29,33 @@ pub enum LogLevel {
     Error,
 }
 
+impl LogLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LogType {
     System,
     App,
     Client,
+}
+
+impl LogType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LogType::System => "system",
+            LogType::App => "app",
+            LogType::Client => "client",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

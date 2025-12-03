@@ -2,6 +2,7 @@ mod config;
 mod domain;
 mod server;
 mod state;
+mod storage;
 
 use clap::Parser;
 use config::{Cli, Config};
@@ -11,7 +12,22 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
     let cli = Cli::parse();
     let config = Config::from_cli(cli)?;
-    server::run_server(config).await
+    tracing::info!(
+        host = %config.host,
+        port = config.port,
+        db = %config.database_url.as_deref().unwrap_or("<none>"),
+        "starting thq-server"
+    );
+    match server::run_server(config).await {
+        Ok(()) => {
+            tracing::warn!("thq-server exited normally (no error)");
+            Ok(())
+        }
+        Err(err) => {
+            tracing::error!(?err, "thq-server exited with error");
+            Err(err)
+        }
+    }
 }
 
 fn init_tracing() {

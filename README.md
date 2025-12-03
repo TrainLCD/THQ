@@ -13,6 +13,8 @@ Rust-only telemetry WebSocket server for THQ/TrainLCD.
 cargo run -- --host 0.0.0.0 --port 8080
 # or with config file
 cargo run -- --config config.toml
+# DATABASE_URL can also be supplied via env or config file
+cargo run -- --database-url postgres://user:pass@localhost:5432/thq
 ```
 
 Example `config.toml`:
@@ -21,7 +23,43 @@ Example `config.toml`:
 host = "0.0.0.0"
 port = 8080
 ring_size = 1000
+database_url = "postgres://user:pass@localhost:5432/thq"
 ```
+
+## Docker Compose
+
+Build and start the server with PostgreSQL locally:
+
+```bash
+docker compose up --build
+```
+
+- WebSocket: `ws://localhost:8080/ws`
+- Postgres: `postgres://thq:thq@localhost:5432/thq`
+- Docker uses Rust 1.91-slim builder and Postgres 18 image by default (runtime base
+  is debian:trixie with `postgresql-client` installed for startup wait).
+
+Environment variables can be overridden in `docker-compose.yml` as needed.
+
+Toolchain: pinned to Rust `1.91` via `rust-toolchain.toml`; Docker builder uses
+`rust:1.91-slim`. If you ever hit an `edition2024` error, rebuild after the image
+update or clear old builder cache:
+
+```bash
+docker compose build --no-cache
+```
+
+
+## Persistence
+
+When `database_url`/`DATABASE_URL` is provided, the server connects to PostgreSQL,
+creates the tables if missing, and stores each incoming message:
+
+- `location_events`: `id`, `device`, `state`, `latitude`, `longitude`, `accuracy`, `speed`, `timestamp`, `recorded_at`
+- `log_events`: `id`, `device`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at`
+
+Without a `database_url` the server still accepts WebSocket traffic but does not
+persist messages.
 
 ## Message formats
 

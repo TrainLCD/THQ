@@ -26,18 +26,37 @@ use crate::{
         OutgoingError, OutgoingLocation, OutgoingLog, OutgoingMessage,
     },
     state::TelemetryHub,
+    storage::Storage,
 };
 
 const BAD_ACCURACY_THRESHOLD: f64 = 100.0; // meters
 
+#[derive(Clone)]
+struct AppState {
+    hub: Arc<TelemetryHub>,
+    storage: Storage,
+}
+
 pub async fn run_server(config: Config) -> anyhow::Result<()> {
     let hub = Arc::new(TelemetryHub::new(config.ring_size));
+    let storage = Storage::connect(config.database_url.clone()).await?;
+
+    if storage.enabled() {
+        tracing::info!("database persistence enabled");
+    } else {
+        tracing::info!("database_url not set; persistence is disabled");
+    }
+
+    let state = AppState {
+        hub: hub.clone(),
+        storage: storage.clone(),
+    };
 
     let app = Router::new()
         .route("/", get(ws_handler))
         .route("/ws", get(ws_handler))
         .route("/healthz", get(healthz))
-        .with_state(hub.clone());
+        .with_state(state);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
@@ -66,16 +85,18 @@ pub async fn run_server(config: Config) -> anyhow::Result<()> {
 async fn ws_handler(
     ws: WebSocketUpgrade,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    State(hub): State<Arc<TelemetryHub>>,
+    State(state): State<AppState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, peer, hub))
+    ws.on_upgrade(move |socket| handle_socket(socket, peer, state))
 }
 
 async fn healthz() -> impl IntoResponse {
     StatusCode::OK
 }
 
-async fn handle_socket(socket: WebSocket, peer: SocketAddr, hub: Arc<TelemetryHub>) {
+async fn handle_socket(socket: WebSocket, peer: SocketAddr, state: AppState) {
+    let hub = state.hub.clone();
+    let storage = state.storage.clone();
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (tx, mut rx) = mpsc::channel::<Message>(256);
     let client_id = Uuid::new_v4();
@@ -94,7 +115,9 @@ async fn handle_socket(socket: WebSocket, peer: SocketAddr, hub: Arc<TelemetryHu
     while let Some(msg) = ws_rx.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                if let Err(err) = handle_text(&text, &hub, &tx, client_id, &mut subscribed).await {
+                if let Err(err) =
+                    handle_text(&text, &hub, &storage, &tx, client_id, &mut subscribed).await
+                {
                     tracing::warn!(%peer, ?err, "failed to handle text frame");
                 }
             }
@@ -126,6 +149,7 @@ async fn handle_socket(socket: WebSocket, peer: SocketAddr, hub: Arc<TelemetryHu
 async fn handle_text(
     text: &str,
     hub: &Arc<TelemetryHub>,
+    storage: &Storage,
     tx: &mpsc::Sender<Message>,
     client_id: Uuid,
     subscribed: &mut bool,
@@ -192,6 +216,12 @@ async fn handle_text(
                 }
             }
 
+            if let OutgoingMessage::LocationUpdate(loc) = &message {
+                if let Err(err) = storage.store_location(loc).await {
+                    tracing::error!(?err, "failed to persist location_update");
+                }
+            }
+
             if let Some(acc) = warning_accuracy {
                 send_error(
                     tx,
@@ -221,6 +251,12 @@ async fn handle_text(
                 Ok(serialized) => hub.broadcast(serialized).await,
                 Err(err) => {
                     tracing::error!(?err, ?message, "failed to serialize log message");
+                }
+            }
+
+            if let OutgoingMessage::Log(log) = &message {
+                if let Err(err) = storage.store_log(log).await {
+                    tracing::error!(?err, "failed to persist log message");
                 }
             }
         }
@@ -353,15 +389,24 @@ fn now_millis() -> u64 {
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            tracing::warn!(?err, "failed to install ctrl+c handler; ignoring");
+            futures::future::pending::<()>().await;
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
         use tokio::signal::unix::{signal, SignalKind};
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("could not install SIGTERM handler");
-        sigterm.recv().await;
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                sigterm.recv().await;
+            }
+            Err(err) => {
+                tracing::warn!(?err, "failed to install SIGTERM handler; ignoring");
+                futures::future::pending::<()>().await;
+            }
+        }
     };
 
     #[cfg(not(unix))]
@@ -424,12 +469,20 @@ mod tests {
     #[tokio::test]
     async fn handle_text_sends_json_parse_error() {
         let hub = Arc::new(TelemetryHub::new(10));
+        let storage = Storage::default();
         let (tx, mut rx) = mpsc::channel(4);
         let mut subscribed = false;
 
-        handle_text("not-json", &hub, &tx, Uuid::new_v4(), &mut subscribed)
-            .await
-            .unwrap();
+        handle_text(
+            "not-json",
+            &hub,
+            &storage,
+            &tx,
+            Uuid::new_v4(),
+            &mut subscribed,
+        )
+        .await
+        .unwrap();
 
         let msg = rx.recv().await.expect("expected error message");
         let Message::Text(text) = msg else {
@@ -443,6 +496,7 @@ mod tests {
     #[tokio::test]
     async fn location_update_is_broadcast_and_buffered() {
         let hub = Arc::new(TelemetryHub::new(10));
+        let storage = Storage::default();
         let (tx, _rx) = mpsc::channel(4);
         let mut subscribed = false;
 
@@ -460,9 +514,16 @@ mod tests {
         })
         .to_string();
 
-        handle_text(&payload, &hub, &tx, Uuid::new_v4(), &mut subscribed)
-            .await
-            .unwrap();
+        handle_text(
+            &payload,
+            &hub,
+            &storage,
+            &tx,
+            Uuid::new_v4(),
+            &mut subscribed,
+        )
+        .await
+        .unwrap();
 
         let snapshot = hub.snapshot().await;
         assert_eq!(snapshot.len(), 1);
@@ -474,6 +535,7 @@ mod tests {
     #[tokio::test]
     async fn log_message_is_broadcast_and_buffered() {
         let hub = Arc::new(TelemetryHub::new(10));
+        let storage = Storage::default();
         let (tx, _rx) = mpsc::channel(4);
         let mut subscribed = false;
 
@@ -489,9 +551,16 @@ mod tests {
         })
         .to_string();
 
-        handle_text(&payload, &hub, &tx, Uuid::new_v4(), &mut subscribed)
-            .await
-            .unwrap();
+        handle_text(
+            &payload,
+            &hub,
+            &storage,
+            &tx,
+            Uuid::new_v4(),
+            &mut subscribed,
+        )
+        .await
+        .unwrap();
 
         let snapshot = hub.snapshot().await;
         assert_eq!(snapshot.len(), 1);
