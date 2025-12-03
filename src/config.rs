@@ -27,6 +27,10 @@ pub struct Cli {
     /// Ring buffer capacity (number of latest events to keep)
     #[arg(long, value_name = "N")]
     pub ring_size: Option<usize>,
+
+    /// PostgreSQL connection string (e.g. postgres://user:pass@host:5432/db)
+    #[arg(long, env = "DATABASE_URL", value_name = "URL")]
+    pub database_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +38,7 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub ring_size: usize,
+    pub database_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -41,6 +46,7 @@ struct FileConfig {
     host: Option<String>,
     port: Option<u16>,
     ring_size: Option<usize>,
+    database_url: Option<String>,
 }
 
 impl Config {
@@ -63,11 +69,15 @@ impl Config {
         if let Some(ring_size) = cli.ring_size {
             file_cfg.ring_size = Some(ring_size);
         }
+        if let Some(database_url) = cli.database_url {
+            file_cfg.database_url = Some(database_url);
+        }
 
         Ok(Config {
             host: file_cfg.host.unwrap_or_else(|| "0.0.0.0".to_string()),
             port: file_cfg.port.unwrap_or(8080),
             ring_size: file_cfg.ring_size.unwrap_or(1000).max(1),
+            database_url: file_cfg.database_url,
         })
     }
 }
@@ -75,7 +85,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, time::Duration};
+    use std::fs;
     use uuid::Uuid;
 
     fn tmp_path(name: &str) -> PathBuf {
@@ -91,6 +101,7 @@ mod tests {
             port: None,
             config: None,
             ring_size: None,
+            database_url: None,
         })
         .unwrap();
 
@@ -109,6 +120,7 @@ mod tests {
             port: None,
             config: Some(path.clone()),
             ring_size: None,
+            database_url: None,
         })
         .unwrap();
 
@@ -130,12 +142,36 @@ mod tests {
             port: Some(7000),
             config: Some(path.clone()),
             ring_size: Some(5),
+            database_url: Some("postgres://cli/override".into()),
         })
         .unwrap();
 
         assert_eq!(cfg.host, "127.0.0.1");
         assert_eq!(cfg.port, 7000);
         assert_eq!(cfg.ring_size, 5);
+        assert_eq!(cfg.database_url.as_deref(), Some("postgres://cli/override"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn database_url_loaded_from_file() {
+        let path = tmp_path("config_db_url");
+        fs::write(&path, "database_url = 'postgres://user:pass@localhost/db'").unwrap();
+
+        let cfg = Config::from_cli(Cli {
+            host: None,
+            port: None,
+            config: Some(path.clone()),
+            ring_size: None,
+            database_url: None,
+        })
+        .unwrap();
+
+        assert_eq!(
+            cfg.database_url.as_deref(),
+            Some("postgres://user:pass@localhost/db")
+        );
 
         let _ = fs::remove_file(path);
     }

@@ -2,6 +2,7 @@ mod config;
 mod domain;
 mod server;
 mod state;
+mod storage;
 
 use clap::Parser;
 use config::{Cli, Config};

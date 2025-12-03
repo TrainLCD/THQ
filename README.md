@@ -13,6 +13,8 @@ Rust-only telemetry WebSocket server for THQ/TrainLCD.
 cargo run -- --host 0.0.0.0 --port 8080
 # or with config file
 cargo run -- --config config.toml
+# DATABASE_URL can also be supplied via env or config file
+cargo run -- --database-url postgres://user:pass@localhost:5432/thq
 ```
 
 Example `config.toml`:
@@ -21,7 +23,19 @@ Example `config.toml`:
 host = "0.0.0.0"
 port = 8080
 ring_size = 1000
+database_url = "postgres://user:pass@localhost:5432/thq"
 ```
+
+## Persistence
+
+When `database_url`/`DATABASE_URL` is provided, the server connects to PostgreSQL,
+creates the tables if missing, and stores each incoming message:
+
+- `location_events`: `id`, `device`, `state`, `latitude`, `longitude`, `accuracy`, `speed`, `timestamp`, `recorded_at`
+- `log_events`: `id`, `device`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at`
+
+Without a `database_url` the server still accepts WebSocket traffic but does not
+persist messages.
 
 ## Message formats
 
