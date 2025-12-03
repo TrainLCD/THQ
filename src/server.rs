@@ -254,13 +254,13 @@ fn normalize_location(
         if !acc.is_finite() {
             return Err(ValidationError(
                 ErrorType::PayloadParseError,
-                "accuracy must be finite and >= 0".to_string(),
+                "accuracy must be finite".to_string(),
             ));
         }
         if acc < 0.0 {
             return Err(ValidationError(
                 ErrorType::PayloadParseError,
-                "accuracy must be finite and >= 0".to_string(),
+                "accuracy must be >= 0".to_string(),
             ));
         }
     }
