@@ -72,7 +72,3 @@ ring_size = 1000
   }
 }
 ```
-
-## Notes
-- Existing Tauri/React code was removed per request; this repo now contains only the Rust server.
-- `.git` directory is preserved.
