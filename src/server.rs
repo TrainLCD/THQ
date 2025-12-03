@@ -157,8 +157,11 @@ async fn handle_text(
 
                 let who = device.unwrap_or_else(|| "unknown-client".to_string());
                 let ack = system_log(&format!("subscriber registered: {who}"));
-                if let Ok(payload) = serde_json::to_string(&ack) {
-                    hub.broadcast(payload).await;
+                match serde_json::to_string(&ack) {
+                    Ok(payload) => hub.broadcast(payload).await,
+                    Err(err) => {
+                        tracing::error!(?err, ?ack, "failed to serialize subscribe ack");
+                    }
                 }
             }
         }
@@ -178,8 +181,15 @@ async fn handle_text(
                 }
             };
 
-            if let Ok(serialized) = serde_json::to_string(&message) {
-                hub.broadcast(serialized).await;
+            match serde_json::to_string(&message) {
+                Ok(serialized) => hub.broadcast(serialized).await,
+                Err(err) => {
+                    tracing::error!(
+                        ?err,
+                        ?message,
+                        "failed to serialize location_update message"
+                    );
+                }
             }
 
             if let Some(acc) = warning_accuracy {
@@ -207,8 +217,11 @@ async fn handle_text(
                 }
             };
 
-            if let Ok(serialized) = serde_json::to_string(&message) {
-                hub.broadcast(serialized).await;
+            match serde_json::to_string(&message) {
+                Ok(serialized) => hub.broadcast(serialized).await,
+                Err(err) => {
+                    tracing::error!(?err, ?message, "failed to serialize log message");
+                }
             }
         }
     }
@@ -308,8 +321,13 @@ async fn send_error(tx: &mpsc::Sender<Message>, r#type: ErrorType, reason: impl 
         },
     });
 
-    if let Ok(json) = serde_json::to_string(&payload) {
-        let _ = tx.send(Message::Text(json)).await;
+    match serde_json::to_string(&payload) {
+        Ok(json) => {
+            let _ = tx.send(Message::Text(json)).await;
+        }
+        Err(err) => {
+            tracing::error!(?err, ?payload, "failed to serialize error payload");
+        }
     }
 }
 
