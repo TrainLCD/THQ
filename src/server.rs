@@ -133,6 +133,7 @@ async fn handle_text(
     let parsed: IncomingMessage = match serde_json::from_str(text) {
         Ok(val) => val,
         Err(err) => {
+            tracing::warn!(%text, ?err, "failed to parse incoming JSON");
             send_error(
                 tx,
                 ErrorType::JsonParseError,
