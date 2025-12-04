@@ -10,7 +10,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         ConnectInfo, State,
     },
-    http::StatusCode,
+    http::{header::SEC_WEBSOCKET_PROTOCOL, HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
     Router,
@@ -32,9 +32,16 @@ use crate::{
 const BAD_ACCURACY_THRESHOLD: f64 = 100.0; // meters
 
 #[derive(Clone)]
+struct AuthConfig {
+    token: Option<String>,
+    required: bool,
+}
+
+#[derive(Clone)]
 struct AppState {
     hub: Arc<TelemetryHub>,
     storage: Storage,
+    auth: AuthConfig,
 }
 
 pub async fn run_server(config: Config) -> anyhow::Result<()> {
@@ -50,6 +57,10 @@ pub async fn run_server(config: Config) -> anyhow::Result<()> {
     let state = AppState {
         hub: hub.clone(),
         storage: storage.clone(),
+        auth: AuthConfig {
+            token: config.ws_auth_token.clone(),
+            required: config.ws_auth_required,
+        },
     };
 
     let app = Router::new()
@@ -84,10 +95,26 @@ pub async fn run_server(config: Config) -> anyhow::Result<()> {
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
+    headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, peer, state))
+    let protocol_header = headers
+        .get(SEC_WEBSOCKET_PROTOCOL)
+        .and_then(|v| v.to_str().ok());
+
+    if let Err(err) = enforce_ws_auth(protocol_header, &state.auth) {
+        tracing::warn!(%peer, reason = err.message(), "websocket auth failed");
+        return (err.status(), err.message()).into_response();
+    }
+
+    // Only echo the formal protocol name back when the client proposed it.
+    let upgrade = match protocol_header.map(parse_protocol_header) {
+        Some(parsed) if parsed.has_thq => ws.protocols(["thq"]),
+        _ => ws,
+    };
+
+    upgrade.on_upgrade(move |socket| handle_socket(socket, peer, state))
 }
 
 async fn healthz() -> impl IntoResponse {
@@ -144,6 +171,81 @@ async fn handle_socket(socket: WebSocket, peer: SocketAddr, state: AppState) {
     hub.remove_subscriber(&client_id).await;
     writer.abort();
     tracing::info!(%peer, %client_id, "client disconnected");
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedProtocols {
+    has_thq: bool,
+    token: Option<String>,
+}
+
+fn parse_protocol_header(raw: &str) -> ParsedProtocols {
+    let mut has_thq = false;
+    let mut token = None;
+
+    for entry in raw.split(',').map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        if entry.eq_ignore_ascii_case("thq") {
+            has_thq = true;
+        }
+
+        if let Some(rest) = entry.strip_prefix("thq-auth-") {
+            if token.is_none() {
+                token = Some(rest.to_string());
+            }
+        }
+    }
+
+    ParsedProtocols { has_thq, token }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AuthError {
+    MissingHeader,
+    MissingThqProtocol,
+    MissingToken,
+    TokenNotConfigured,
+    TokenMismatch,
+}
+
+impl AuthError {
+    fn status(&self) -> StatusCode {
+        match self {
+            AuthError::TokenNotConfigured => StatusCode::INTERNAL_SERVER_ERROR,
+            _ => StatusCode::UNAUTHORIZED,
+        }
+    }
+
+    fn message(&self) -> &'static str {
+        match self {
+            AuthError::MissingHeader => "missing Sec-WebSocket-Protocol header",
+            AuthError::MissingThqProtocol => "'thq' protocol not requested",
+            AuthError::MissingToken => "missing thq-auth token",
+            AuthError::TokenNotConfigured => "server token is not configured",
+            AuthError::TokenMismatch => "invalid websocket auth token",
+        }
+    }
+}
+
+fn enforce_ws_auth(header: Option<&str>, auth: &AuthConfig) -> Result<(), AuthError> {
+    if !auth.required {
+        return Ok(());
+    }
+
+    let raw = header.ok_or(AuthError::MissingHeader)?;
+    let parsed = parse_protocol_header(raw);
+
+    if !parsed.has_thq {
+        return Err(AuthError::MissingThqProtocol);
+    }
+
+    let token = parsed.token.ok_or(AuthError::MissingToken)?;
+    let expected = auth.token.as_ref().ok_or(AuthError::TokenNotConfigured)?;
+
+    if token == *expected {
+        Ok(())
+    } else {
+        Err(AuthError::TokenMismatch)
+    }
 }
 
 async fn handle_text(
@@ -580,5 +682,58 @@ mod tests {
         let v: Value = serde_json::from_str(&snapshot[0]).expect("broadcast must be valid json");
         assert_eq!(v["type"], "log");
         assert_eq!(v["log"]["message"], "ok");
+    }
+
+    #[test]
+    fn parses_protocol_and_token() {
+        let parsed = parse_protocol_header("thq, thq-auth-abcdef");
+        assert!(parsed.has_thq);
+        assert_eq!(parsed.token.as_deref(), Some("abcdef"));
+    }
+
+    #[test]
+    fn parses_protocol_token_in_any_order() {
+        let parsed = parse_protocol_header("thq-auth-abcdef, thq");
+        assert!(parsed.has_thq);
+        assert_eq!(parsed.token.as_deref(), Some("abcdef"));
+    }
+
+    #[test]
+    fn enforce_requires_token_when_enabled() {
+        let res = enforce_ws_auth(
+            Some("thq"),
+            &AuthConfig {
+                token: Some("secret".into()),
+                required: true,
+            },
+        );
+
+        assert_eq!(res.unwrap_err(), AuthError::MissingToken);
+    }
+
+    #[test]
+    fn enforce_accepts_correct_token() {
+        let res = enforce_ws_auth(
+            Some("thq, thq-auth-secret"),
+            &AuthConfig {
+                token: Some("secret".into()),
+                required: true,
+            },
+        );
+
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn enforce_rejects_wrong_token() {
+        let res = enforce_ws_auth(
+            Some("thq, thq-auth-wrong"),
+            &AuthConfig {
+                token: Some("secret".into()),
+                required: true,
+            },
+        );
+
+        assert_eq!(res.unwrap_err(), AuthError::TokenMismatch);
     }
 }
