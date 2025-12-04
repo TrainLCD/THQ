@@ -422,6 +422,13 @@ fn normalize_location(
         }
     }
 
+    // station_id is only meaningful when not moving/approaching; drop it otherwise
+    let station_id = if matches!(state, MovementState::Moving | MovementState::Approaching) {
+        None
+    } else {
+        station_id
+    };
+
     Ok(OutgoingMessage::LocationUpdate(OutgoingLocation {
         id: id.unwrap_or_else(|| Uuid::new_v4().to_string()),
         device,
@@ -619,6 +626,7 @@ mod tests {
             "device": "dev",
             "state": "moving",
             "line_id": 100,
+            "station_id": 9,
             "coords": {
                 "latitude": 35.0,
                 "longitude": 139.0,
@@ -645,6 +653,48 @@ mod tests {
         let v: Value = serde_json::from_str(&snapshot[0]).expect("broadcast must be valid json");
         assert_eq!(v["type"], "location_update");
         assert_eq!(v["device"], "dev");
+        assert!(v["station_id"].is_null());
+    }
+
+    #[tokio::test]
+    async fn approaching_drops_station_id() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let storage = Storage::default();
+        let (tx, _rx) = mpsc::channel(4);
+        let mut subscribed = false;
+
+        let payload = serde_json::json!({
+            "type": "location_update",
+            "device": "dev",
+            "state": "approaching",
+            "station_id": 11,
+            "line_id": 100,
+            "coords": {
+                "latitude": 35.0,
+                "longitude": 139.0,
+                "accuracy": 5.0,
+                "speed": 12.0
+            },
+            "timestamp": 123
+        })
+        .to_string();
+
+        handle_text(
+            &payload,
+            &hub,
+            &storage,
+            &tx,
+            Uuid::new_v4(),
+            &mut subscribed,
+        )
+        .await
+        .unwrap();
+
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let v: Value = serde_json::from_str(&snapshot[0]).expect("broadcast must be valid json");
+        assert_eq!(v["state"], "approaching");
+        assert!(v["station_id"].is_null());
     }
 
     #[tokio::test]

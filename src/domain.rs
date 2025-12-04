@@ -85,8 +85,9 @@ pub enum IncomingMessage {
         id: Option<String>,
         device: String,
         state: MovementState,
-        #[serde(default)]
+        #[serde(default, alias = "stationId")]
         station_id: Option<i32>,
+        #[serde(alias = "lineId")]
         line_id: i32,
         coords: Coords,
         timestamp: u64,
@@ -170,6 +171,34 @@ mod tests {
                 assert_eq!(device.as_deref(), Some("dev"));
             }
             _ => panic!("expected subscribe variant"),
+        }
+    }
+
+    #[test]
+    fn incoming_location_accepts_camel_case_ids() {
+        let json = r#"{
+            "type":"location_update",
+            "device":"dev",
+            "state":"moving",
+            "stationId":101,
+            "lineId":202,
+            "coords": {"latitude":1.0,"longitude":2.0,"speed":3.0},
+            "timestamp": 1
+        }"#;
+
+        let v: IncomingMessage = serde_json::from_str(json).unwrap();
+        match v {
+            IncomingMessage::LocationUpdate {
+                station_id,
+                line_id,
+                coords,
+                ..
+            } => {
+                assert_eq!(station_id, Some(101));
+                assert_eq!(line_id, 202);
+                assert_eq!(coords.speed, Some(3.0));
+            }
+            _ => panic!("expected location_update variant"),
         }
     }
 
