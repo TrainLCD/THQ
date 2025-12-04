@@ -85,6 +85,9 @@ pub enum IncomingMessage {
         id: Option<String>,
         device: String,
         state: MovementState,
+        #[serde(default)]
+        station_id: Option<i32>,
+        line_id: i32,
         coords: Coords,
         timestamp: u64,
     },
@@ -110,6 +113,8 @@ pub struct OutgoingLocation {
     pub id: String,
     pub device: String,
     pub state: MovementState,
+    pub station_id: Option<i32>,
+    pub line_id: i32,
     pub coords: OutgoingCoords,
     pub timestamp: u64,
 }
@@ -174,6 +179,8 @@ mod tests {
             id: "id1".into(),
             device: "dev".into(),
             state: MovementState::Moving,
+            station_id: Some(42),
+            line_id: 7,
             coords: OutgoingCoords {
                 latitude: 1.0,
                 longitude: 2.0,

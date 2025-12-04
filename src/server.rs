@@ -193,17 +193,21 @@ async fn handle_text(
             id,
             device,
             state,
+            station_id,
+            line_id,
             coords,
             timestamp,
         } => {
             let warning_accuracy = coords.accuracy.filter(|v| *v > BAD_ACCURACY_THRESHOLD);
-            let message = match normalize_location(id, device, state, coords, timestamp) {
-                Ok(msg) => msg,
-                Err(err) => {
-                    send_error(tx, err.0, err.1).await;
-                    return Ok(());
-                }
-            };
+            let message =
+                match normalize_location(id, device, state, station_id, line_id, coords, timestamp)
+                {
+                    Ok(msg) => msg,
+                    Err(err) => {
+                        send_error(tx, err.0, err.1).await;
+                        return Ok(());
+                    }
+                };
 
             match serde_json::to_string(&message) {
                 Ok(serialized) => hub.broadcast(serialized).await,
@@ -271,6 +275,8 @@ fn normalize_location(
     id: Option<String>,
     device: String,
     state: MovementState,
+    station_id: Option<i32>,
+    line_id: i32,
     coords: Coords,
     timestamp: u64,
 ) -> Result<OutgoingMessage, ValidationError> {
@@ -318,6 +324,8 @@ fn normalize_location(
         id: id.unwrap_or_else(|| Uuid::new_v4().to_string()),
         device,
         state,
+        station_id,
+        line_id,
         coords: OutgoingCoords {
             latitude: coords.latitude,
             longitude: coords.longitude,
@@ -434,6 +442,8 @@ mod tests {
             None,
             "dev".to_string(),
             MovementState::Moving,
+            None,
+            1,
             Coords {
                 latitude: 35.0,
                 longitude: 139.0,
@@ -453,6 +463,8 @@ mod tests {
             None,
             "dev".to_string(),
             MovementState::Moving,
+            None,
+            1,
             Coords {
                 latitude: 35.0,
                 longitude: 139.0,
@@ -504,6 +516,7 @@ mod tests {
             "type": "location_update",
             "device": "dev",
             "state": "moving",
+            "line_id": 100,
             "coords": {
                 "latitude": 35.0,
                 "longitude": 139.0,
