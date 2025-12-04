@@ -6,6 +6,17 @@ use tracing::info;
 
 use crate::domain::{LogLevel, LogType, MovementState, OutgoingLocation, OutgoingLog};
 
+#[derive(Clone, sqlx::FromRow)]
+pub struct LineAccuracyBucketRow {
+    pub bucket_start: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+    pub bucket_end: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+    pub avg_accuracy: f64,
+    pub p90_accuracy: f64,
+    pub sample_count: i32,
+    pub avg_speed: f64,
+    pub max_speed: f64,
+}
+
 #[derive(Clone, Default)]
 pub struct Storage {
     pool: Option<PgPool>,
@@ -147,6 +158,58 @@ impl Storage {
         .context("failed to insert log event")?;
 
         Ok(())
+    }
+
+    pub async fn fetch_line_accuracy(
+        &self,
+        line_id: i32,
+        from: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+        to: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+        trunc_unit: &str,
+        bucket_seconds: i64,
+        limit: i32,
+    ) -> anyhow::Result<Vec<LineAccuracyBucketRow>> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("database is not configured"))?;
+
+        let rows = sqlx::query_as::<_, LineAccuracyBucketRow>(
+            r#"
+            SELECT
+                date_trunc($1, ts) AS bucket_start,
+                date_trunc($1, ts) + make_interval(secs => $2) AS bucket_end,
+                AVG(accuracy) AS avg_accuracy,
+                percentile_cont(0.9) WITHIN GROUP (ORDER BY accuracy) AS p90_accuracy,
+                COUNT(*)::int AS sample_count,
+                AVG(speed) AS avg_speed,
+                MAX(speed) AS max_speed
+            FROM (
+                SELECT
+                    (to_timestamp(timestamp / 1000.0) AT TIME ZONE 'UTC')::timestamptz AS ts,
+                    accuracy,
+                    speed
+                FROM location_events
+                WHERE line_id = $3
+                  AND to_timestamp(timestamp / 1000.0) >= $4
+                  AND to_timestamp(timestamp / 1000.0) < $5
+                  AND accuracy IS NOT NULL
+            ) AS raw
+            GROUP BY 1,2
+            ORDER BY bucket_start
+            LIMIT $6
+            "#,
+        )
+        .bind(trunc_unit)
+        .bind(bucket_seconds as f64)
+        .bind(line_id)
+        .bind(from)
+        .bind(to)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
     }
 }
 

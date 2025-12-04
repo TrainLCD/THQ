@@ -5,18 +5,21 @@ use std::{
 };
 
 use anyhow::Context;
+use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
+use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         ConnectInfo, State,
     },
     http::{header::SEC_WEBSOCKET_PROTOCOL, HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{Html, IntoResponse},
     routing::get,
     Router,
 };
 use futures::{SinkExt, StreamExt};
-use tokio::{net::TcpListener, sync::mpsc};
+use tokio::sync::mpsc;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
@@ -25,6 +28,7 @@ use crate::{
         Coords, ErrorBody, ErrorType, IncomingMessage, LogBody, MovementState, OutgoingCoords,
         OutgoingError, OutgoingLocation, OutgoingLog, OutgoingMessage,
     },
+    graphql::{build_schema, AppSchema},
     state::TelemetryHub,
     storage::Storage,
 };
@@ -42,16 +46,22 @@ struct AppState {
     hub: Arc<TelemetryHub>,
     storage: Storage,
     auth: AuthConfig,
+    schema: AppSchema,
 }
 
 pub async fn run_server(config: Config) -> anyhow::Result<()> {
     let hub = Arc::new(TelemetryHub::new(config.ring_size));
     let storage = Storage::connect(config.database_url.clone()).await?;
+    let schema = build_schema(storage.clone());
 
     if storage.enabled() {
         tracing::info!("database persistence enabled");
     } else {
         tracing::info!("database_url not set; persistence is disabled");
+    }
+
+    if !config.ws_auth_required && config.ws_auth_token.is_none() {
+        warn!("websocket auth is disabled because THQ_WS_AUTH_TOKEN is not set");
     }
 
     let state = AppState {
@@ -61,12 +71,15 @@ pub async fn run_server(config: Config) -> anyhow::Result<()> {
             token: config.ws_auth_token.clone(),
             required: config.ws_auth_required,
         },
+        schema: schema.clone(),
     };
 
     let app = Router::new()
         .route("/", get(ws_handler))
         .route("/ws", get(ws_handler))
         .route("/healthz", get(healthz))
+        .with_state(state.clone())
+        .route("/graphql", get(graphql_playground).post(graphql_handler))
         .with_state(state);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
@@ -78,19 +91,13 @@ pub async fn run_server(config: Config) -> anyhow::Result<()> {
             )
         })?;
 
-    let listener = TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("failed to bind on {addr}"))?;
-
     tracing::info!(%addr, "thq-server listening (ws endpoint at /ws)");
 
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .context("server error")
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("server error")
 }
 
 async fn ws_handler(
@@ -119,6 +126,15 @@ async fn ws_handler(
 
 async fn healthz() -> impl IntoResponse {
     StatusCode::OK
+}
+async fn graphql_handler(State(state): State<AppState>, req: GraphQLRequest) -> GraphQLResponse {
+    state.schema.execute(req.into_inner()).await.into()
+}
+
+async fn graphql_playground() -> impl IntoResponse {
+    Html(playground_source(
+        GraphQLPlaygroundConfig::new("/graphql").subscription_endpoint("/graphql"),
+    ))
 }
 
 async fn handle_socket(socket: WebSocket, peer: SocketAddr, state: AppState) {

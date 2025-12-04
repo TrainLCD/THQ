@@ -1,10 +1,9 @@
 FROM rust:1.91-slim AS builder
 WORKDIR /app
 
-# Cache dependency build
+# Fetch dependencies (caches target deps)
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release && rm -rf src
+RUN mkdir -p src && echo "fn main() {}" > src/main.rs && cargo fetch && rm -rf src
 
 # Build actual binary
 COPY src ./src
