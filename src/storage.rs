@@ -48,6 +48,8 @@ impl Storage {
                 id TEXT PRIMARY KEY,
                 device TEXT NOT NULL,
                 state TEXT NOT NULL,
+                station_id INTEGER,
+                line_id INTEGER NOT NULL,
                 latitude DOUBLE PRECISION NOT NULL,
                 longitude DOUBLE PRECISION NOT NULL,
                 accuracy DOUBLE PRECISION,
@@ -59,6 +61,14 @@ impl Storage {
         )
         .execute(pool)
         .await?;
+
+        // best-effort migrations for previously created tables
+        sqlx::query("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS station_id INTEGER;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS line_id INTEGER;")
+            .execute(pool)
+            .await?;
 
         sqlx::query(
             r#"
@@ -97,11 +107,13 @@ impl Storage {
         let ts = i64::try_from(loc.timestamp).unwrap_or(i64::MAX);
 
         sqlx::query(
-            "INSERT INTO location_events (id, device, state, latitude, longitude, accuracy, speed, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO location_events (id, device, state, station_id, line_id, latitude, longitude, accuracy, speed, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&loc.id)
         .bind(&loc.device)
         .bind(movement_state_str(&loc.state))
+        .bind(loc.station_id)
+        .bind(loc.line_id)
         .bind(loc.coords.latitude)
         .bind(loc.coords.longitude)
         .bind(loc.coords.accuracy)
