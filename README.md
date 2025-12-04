@@ -131,7 +131,72 @@ persist messages.
   "type": "error",
   "error": {
     "type": "websocket_message_error | json_parse_error | payload_parse_error | accuracy_low | invalid_coords | unknown",
-    "reason": "..."
+  "reason": "..."
   }
 }
 ```
+
+## GraphQL reports (line-level accuracy)
+
+- Endpoint: `POST /graphql` (GraphQL Playground available via `GET /graphql`).
+- Purpose: return **aggregated** accuracy metrics per `line_id`, never raw location rows.
+- Guardrails:
+  - `from`/`to` required; span limits per bucket: MINUTE ≤ 7d, HOUR ≤ 90d, DAY ≤ 365d.
+  - `limit` defaults to 500 and is capped at 2000 buckets.
+  - `lineId` must be a single numeric ID; batching multiple lines is not yet supported.
+
+Schema (initial scope):
+
+```graphql
+enum TimeBucketSize { MINUTE HOUR DAY }
+
+type LineAccuracyBucket {
+  bucketStart: DateTime!
+  bucketEnd: DateTime!
+  avgAccuracy: Float!
+  p90Accuracy: Float!
+  sampleCount: Int!
+}
+
+type LineAccuracyReport {
+  lineId: ID!
+  buckets: [LineAccuracyBucket!]!
+}
+
+type Query {
+  accuracyByLine(
+    lineId: ID!
+    from: DateTime!
+    to: DateTime!
+    bucketSize: TimeBucketSize!
+    limit: Int = 500
+  ): LineAccuracyReport!
+}
+```
+
+Example query:
+
+```graphql
+query {
+  accuracyByLine(
+    lineId: "45"
+    from: "2024-12-01T00:00:00Z"
+    to: "2024-12-03T00:00:00Z"
+    bucketSize: HOUR
+    limit: 100
+  ) {
+    lineId
+    buckets {
+      bucketStart
+      bucketEnd
+      avgAccuracy
+      p90Accuracy
+      sampleCount
+    }
+  }
+}
+```
+
+Notes:
+- Only aggregated accuracy is exposed; raw lat/lng samples are not returned via GraphQL.
+- Queries exceeding the span/bucket/limit guards fail fast with an error.

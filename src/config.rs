@@ -97,6 +97,12 @@ impl Config {
             (None, None) => false,
         };
 
+        if ws_auth_required && file_cfg.ws_auth_token.is_none() {
+            anyhow::bail!(
+                "ws_auth_required=true but ws_auth_token is missing; set THQ_WS_AUTH_TOKEN or disable auth"
+            );
+        }
+
         Ok(Config {
             host: file_cfg.host.unwrap_or_else(|| "0.0.0.0".to_string()),
             port: file_cfg.port.unwrap_or(8080),
