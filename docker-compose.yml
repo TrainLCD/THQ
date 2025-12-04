@@ -6,11 +6,15 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://thq:thq@db:5432/thq
+      THQ_WS_AUTH_TOKEN: ${THQ_WS_AUTH_TOKEN:?set in .env or shell}
+      THQ_WS_AUTH_REQUIRED: ${THQ_WS_AUTH_REQUIRED:-true}
       # RUST_LOG: debug,thq_server=debug
       RUST_BACKTRACE: 1
     ports:
       - "8080:8080"
     restart: unless-stopped
+    env_file:
+      - .env
 
   db:
     image: postgres:18

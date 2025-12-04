@@ -16,6 +16,8 @@ async fn main() -> anyhow::Result<()> {
         host = %config.host,
         port = config.port,
         db = %config.database_url.as_deref().unwrap_or("<none>"),
+        ws_auth_configured = config.ws_auth_token.is_some(),
+        ws_auth_required = config.ws_auth_required,
         "starting thq-server"
     );
     match server::run_server(config).await {

@@ -31,6 +31,14 @@ pub struct Cli {
     /// PostgreSQL connection string (e.g. postgres://user:pass@host:5432/db)
     #[arg(long, env = "DATABASE_URL", value_name = "URL")]
     pub database_url: Option<String>,
+
+    /// Shared secret token required for WebSocket auth (via Sec-WebSocket-Protocol)
+    #[arg(long, env = "THQ_WS_AUTH_TOKEN", value_name = "TOKEN")]
+    pub ws_auth_token: Option<String>,
+
+    /// Whether WebSocket auth is required (true/false). Defaults to true when a token is supplied.
+    #[arg(long, env = "THQ_WS_AUTH_REQUIRED")]
+    pub ws_auth_required: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +47,8 @@ pub struct Config {
     pub port: u16,
     pub ring_size: usize,
     pub database_url: Option<String>,
+    pub ws_auth_token: Option<String>,
+    pub ws_auth_required: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -47,6 +57,8 @@ struct FileConfig {
     port: Option<u16>,
     ring_size: Option<usize>,
     database_url: Option<String>,
+    ws_auth_token: Option<String>,
+    ws_auth_required: Option<bool>,
 }
 
 impl Config {
@@ -72,12 +84,26 @@ impl Config {
         if let Some(database_url) = cli.database_url {
             file_cfg.database_url = Some(database_url);
         }
+        if let Some(ws_auth_token) = cli.ws_auth_token {
+            file_cfg.ws_auth_token = Some(ws_auth_token);
+        }
+        if let Some(ws_auth_required) = cli.ws_auth_required {
+            file_cfg.ws_auth_required = Some(ws_auth_required);
+        }
+
+        let ws_auth_required = match (file_cfg.ws_auth_required, file_cfg.ws_auth_token.as_ref()) {
+            (Some(required), _) => required,
+            (None, Some(_)) => true,
+            (None, None) => false,
+        };
 
         Ok(Config {
             host: file_cfg.host.unwrap_or_else(|| "0.0.0.0".to_string()),
             port: file_cfg.port.unwrap_or(8080),
             ring_size: file_cfg.ring_size.unwrap_or(1000).max(1),
             database_url: file_cfg.database_url,
+            ws_auth_token: file_cfg.ws_auth_token,
+            ws_auth_required,
         })
     }
 }
@@ -102,12 +128,16 @@ mod tests {
             config: None,
             ring_size: None,
             database_url: None,
+            ws_auth_token: None,
+            ws_auth_required: None,
         })
         .unwrap();
 
         assert_eq!(cfg.host, "0.0.0.0");
         assert_eq!(cfg.port, 8080);
         assert_eq!(cfg.ring_size, 1000);
+        assert!(cfg.ws_auth_token.is_none());
+        assert!(!cfg.ws_auth_required);
     }
 
     #[test]
@@ -121,6 +151,8 @@ mod tests {
             config: Some(path.clone()),
             ring_size: None,
             database_url: None,
+            ws_auth_token: None,
+            ws_auth_required: None,
         })
         .unwrap();
 
@@ -143,6 +175,8 @@ mod tests {
             config: Some(path.clone()),
             ring_size: Some(5),
             database_url: Some("postgres://cli/override".into()),
+            ws_auth_token: Some("cli-token".into()),
+            ws_auth_required: Some(false),
         })
         .unwrap();
 
@@ -150,6 +184,8 @@ mod tests {
         assert_eq!(cfg.port, 7000);
         assert_eq!(cfg.ring_size, 5);
         assert_eq!(cfg.database_url.as_deref(), Some("postgres://cli/override"));
+        assert_eq!(cfg.ws_auth_token.as_deref(), Some("cli-token"));
+        assert!(!cfg.ws_auth_required);
 
         let _ = fs::remove_file(path);
     }
@@ -165,6 +201,8 @@ mod tests {
             config: Some(path.clone()),
             ring_size: None,
             database_url: None,
+            ws_auth_token: None,
+            ws_auth_required: None,
         })
         .unwrap();
 
@@ -174,5 +212,39 @@ mod tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn ws_auth_defaults_to_required_when_token_present() {
+        let cfg = Config::from_cli(Cli {
+            host: None,
+            port: None,
+            config: None,
+            ring_size: None,
+            database_url: None,
+            ws_auth_token: Some("secret".into()),
+            ws_auth_required: None,
+        })
+        .unwrap();
+
+        assert!(cfg.ws_auth_required);
+        assert_eq!(cfg.ws_auth_token.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn ws_auth_can_be_disabled_explicitly() {
+        let cfg = Config::from_cli(Cli {
+            host: None,
+            port: None,
+            config: None,
+            ring_size: None,
+            database_url: None,
+            ws_auth_token: Some("secret".into()),
+            ws_auth_required: Some(false),
+        })
+        .unwrap();
+
+        assert!(!cfg.ws_auth_required);
+        assert_eq!(cfg.ws_auth_token.as_deref(), Some("secret"));
     }
 }

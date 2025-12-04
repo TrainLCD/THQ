@@ -6,6 +6,7 @@ Rust-only telemetry WebSocket server for THQ/TrainLCD.
 - Health check: `GET /healthz`
 - Broadcasts `location_update` and `log` messages to all subscribers
 - Maintains a ring buffer of the latest N events (default 1000)
+- Optional WebSocket auth using `Sec-WebSocket-Protocol: thq, thq-auth-<token>`
 
 ## Usage
 
@@ -15,6 +16,8 @@ cargo run -- --host 0.0.0.0 --port 8080
 cargo run -- --config config.toml
 # DATABASE_URL can also be supplied via env or config file
 cargo run -- --database-url postgres://user:pass@localhost:5432/thq
+# WebSocket auth token can be supplied via env/cli/config
+THQ_WS_AUTH_TOKEN=secret cargo run -- --host 0.0.0.0 --port 8080
 ```
 
 Example `config.toml`:
@@ -24,7 +27,25 @@ host = "0.0.0.0"
 port = 8080
 ring_size = 1000
 database_url = "postgres://user:pass@localhost:5432/thq"
+ws_auth_token = "change-me"
+ws_auth_required = true
 ```
+
+## WebSocket authentication
+
+- Client must propose both the app protocol and the auth token via subprotocols:
+
+  ```http
+  Sec-WebSocket-Protocol: thq, thq-auth-<token>
+  ```
+
+- The server validates that `thq` is present and compares `<token>` against
+  `THQ_WS_AUTH_TOKEN`/`ws_auth_token`. On success it responds with
+  `Sec-WebSocket-Protocol: thq`.
+- When `ws_auth_required`/`THQ_WS_AUTH_REQUIRED` is `true` (default when a token
+  is provided), missing or invalid tokens result in HTTP 401 during handshake.
+- Set `ws_auth_required = false` (or `THQ_WS_AUTH_REQUIRED=false`) to skip auth in
+  local development, but prefer sending `thq` to keep clients aligned.
 
 ## Docker Compose
 
