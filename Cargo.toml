@@ -23,3 +23,4 @@ sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-r
 async-graphql = { version = "6", features = ["chrono"] }
 async-graphql-axum = "6"
 chrono = { version = "0.4", features = ["serde"] }
+csv = "1.3"

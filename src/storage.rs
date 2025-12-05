@@ -61,6 +61,9 @@ impl Storage {
                 state TEXT NOT NULL,
                 station_id INTEGER,
                 line_id INTEGER NOT NULL,
+                segment_id TEXT,
+                from_station_id INTEGER,
+                to_station_id INTEGER,
                 latitude DOUBLE PRECISION NOT NULL,
                 longitude DOUBLE PRECISION NOT NULL,
                 accuracy DOUBLE PRECISION,
@@ -78,6 +81,17 @@ impl Storage {
             .execute(pool)
             .await?;
         sqlx::query("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS line_id INTEGER;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS segment_id TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query(
+            "ALTER TABLE location_events ADD COLUMN IF NOT EXISTS from_station_id INTEGER;",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS to_station_id INTEGER;")
             .execute(pool)
             .await?;
 
@@ -103,6 +117,12 @@ impl Storage {
         .execute(pool)
         .await?;
 
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_location_events_segment ON location_events (segment_id);",
+        )
+        .execute(pool)
+        .await?;
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_log_events_device ON log_events (device);")
             .execute(pool)
             .await?;
@@ -118,13 +138,16 @@ impl Storage {
         let ts = i64::try_from(loc.timestamp).unwrap_or(i64::MAX);
 
         sqlx::query(
-            "INSERT INTO location_events (id, device, state, station_id, line_id, latitude, longitude, accuracy, speed, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO location_events (id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&loc.id)
         .bind(&loc.device)
         .bind(movement_state_str(&loc.state))
         .bind(loc.station_id)
         .bind(loc.line_id)
+        .bind(&loc.segment_id)
+        .bind(loc.from_station_id)
+        .bind(loc.to_station_id)
         .bind(loc.coords.latitude)
         .bind(loc.coords.longitude)
         .bind(loc.coords.accuracy)

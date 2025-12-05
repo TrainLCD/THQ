@@ -15,6 +15,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/thq-server /usr/local/bin/thq-server
+RUN mkdir -p /app/static
+COPY --from=builder /app/src/static/join.csv /app/static/join.csv
 
 EXPOSE 8080
 CMD ["thq-server", "--host", "0.0.0.0", "--port", "8080"]
