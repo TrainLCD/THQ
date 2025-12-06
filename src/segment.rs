@@ -286,6 +286,8 @@ struct DeviceTrack {
     prev_station: Option<StationPoint>,
     last_direction: Option<Direction>,
     last_segment: Option<Segment>,
+    // For eviction of idle devices.
+    last_seen: u64,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -341,7 +343,9 @@ impl SegmentEstimator {
         };
 
         let mut tracks = self.tracks.write().await;
+        Self::prune_stale_tracks(&mut tracks, loc.timestamp);
         let track = tracks.entry(loc.device.clone()).or_default();
+        track.last_seen = loc.timestamp;
 
         match loc.state {
             MovementState::Arrived | MovementState::Passing => {
@@ -482,6 +486,11 @@ impl SegmentEstimator {
         track.last_direction = None;
         track.last_segment = None;
     }
+
+    fn prune_stale_tracks(tracks: &mut HashMap<String, DeviceTrack>, now: u64) {
+        const TRACK_TTL_SECS: u64 = 6 * 60 * 60; // 6 hours
+        tracks.retain(|_, t| now.saturating_sub(t.last_seen) <= TRACK_TTL_SECS);
+    }
 }
 
 fn direction_from_indices(prev_idx: usize, curr_idx: usize) -> Option<Direction> {
@@ -609,6 +618,45 @@ mod tests {
         let pairs = vec![(1, 2), (2, 3), (3, 1)];
         let ordered = order_stations_from_pairs(&pairs).expect("cycle orders");
         assert_eq!(ordered, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn prunes_stale_device_tracks() {
+        let estimator = SegmentEstimator::new(topo());
+
+        let first = OutgoingLocation {
+            id: "1".into(),
+            device: "dev".into(),
+            state: MovementState::Arrived,
+            station_id: Some(101),
+            line_id: 1,
+            coords: crate::domain::OutgoingCoords {
+                latitude: 0.0,
+                longitude: 0.0,
+                accuracy: None,
+                speed: 0.0,
+            },
+            timestamp: 1,
+            segment_id: None,
+            from_station_id: None,
+            to_station_id: None,
+        };
+
+        // first annotate stores track
+        let _ = estimator.annotate(first.clone()).await;
+
+        // far future update should remove old track before adding new device
+        let future = OutgoingLocation {
+            timestamp: 6 * 60 * 60 + 2, // past TTL
+            device: "new_dev".into(),
+            ..first
+        };
+
+        let _ = estimator.annotate(future).await;
+
+        let tracks = estimator.tracks.read().await;
+        assert_eq!(tracks.len(), 1);
+        assert!(tracks.contains_key("new_dev"));
     }
 
     #[tokio::test]
