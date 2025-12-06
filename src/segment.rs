@@ -163,40 +163,98 @@ fn order_stations_from_pairs(pairs: &[(i32, i32)]) -> anyhow::Result<Vec<i32>> {
         anyhow::bail!("no station pairs found");
     }
 
-    // Pick an end point (degree 1) if available, otherwise smallest id to make deterministic.
-    let start = adj
-        .iter()
-        .filter(|(_, v)| v.len() == 1)
-        .map(|(k, _)| *k)
-        .min()
-        .unwrap_or_else(|| *adj.keys().min().expect("non-empty adj"));
+    // Make neighbor order deterministic and deduplicate parallel edges.
+    for neighbors in adj.values_mut() {
+        neighbors.sort_unstable();
+        neighbors.dedup();
+    }
 
-    let mut order = Vec::with_capacity(adj.len());
-    let mut visited: HashSet<i32> = HashSet::new();
-    let mut prev: Option<i32> = None;
-    let mut current = start;
+    let total_nodes = adj.len();
+    let mut all_nodes: Vec<i32> = adj.keys().copied().collect();
+    all_nodes.sort_unstable();
 
-    loop {
-        order.push(current);
-        visited.insert(current);
-
-        let neighbors = adj.get(&current).map(|v| v.as_slice()).unwrap_or(&[]);
-        let next = neighbors
-            .iter()
-            .copied()
-            .filter(|n| Some(*n) != prev && !visited.contains(n))
-            .min();
-
-        match next {
-            Some(nxt) => {
-                prev = Some(current);
-                current = nxt;
+    // Ensure the graph is connected; otherwise ordering is undefined.
+    {
+        let mut stack = vec![all_nodes[0]];
+        let mut seen = HashSet::new();
+        while let Some(n) = stack.pop() {
+            if !seen.insert(n) {
+                continue;
             }
-            None => break,
+            if let Some(neigh) = adj.get(&n) {
+                for &m in neigh {
+                    if !seen.contains(&m) {
+                        stack.push(m);
+                    }
+                }
+            }
+        }
+        if seen.len() != total_nodes {
+            anyhow::bail!(
+                "station graph is disconnected (saw {} of {} stations)",
+                seen.len(),
+                total_nodes
+            );
         }
     }
 
-    Ok(order)
+    if total_nodes == 1 {
+        return Ok(all_nodes);
+    }
+
+    // Start points: prefer endpoints (degree 1). If none, try every node (e.g., cycles).
+    let mut start_candidates: Vec<i32> = adj
+        .iter()
+        .filter(|(_, v)| v.len() == 1)
+        .map(|(k, _)| *k)
+        .collect();
+    if start_candidates.is_empty() {
+        start_candidates = all_nodes.clone();
+    }
+    start_candidates.sort_unstable();
+
+    // Backtracking search for a Hamiltonian path.
+    fn backtrack(
+        current: i32,
+        adj: &HashMap<i32, Vec<i32>>,
+        visited: &mut HashSet<i32>,
+        path: &mut Vec<i32>,
+        total: usize,
+    ) -> bool {
+        if path.len() == total {
+            return true;
+        }
+
+        if let Some(neighbors) = adj.get(&current) {
+            for &next in neighbors {
+                if visited.contains(&next) {
+                    continue;
+                }
+                visited.insert(next);
+                path.push(next);
+                if backtrack(next, adj, visited, path, total) {
+                    return true;
+                }
+                path.pop();
+                visited.remove(&next);
+            }
+        }
+
+        false
+    }
+
+    for start in start_candidates {
+        let mut visited = HashSet::new();
+        let mut path = Vec::with_capacity(total_nodes);
+        visited.insert(start);
+        path.push(start);
+
+        if backtrack(start, &adj, &mut visited, &mut path, total_nodes) {
+            return Ok(path);
+        }
+    }
+
+    anyhow::bail!("could not find a linear ordering; graph likely has branching that prevents a single path covering all stations")
 }
 
 #[derive(Clone, Debug)]
@@ -537,6 +595,20 @@ mod tests {
         assert_eq!(stations, &[10, 11, 12]);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_branching_graph() {
+        // 1-2-3 and 2-4 share a fork at 2; cannot form single path without skipping.
+        let pairs = vec![(1, 2), (2, 3), (2, 4)];
+        assert!(order_stations_from_pairs(&pairs).is_err());
+    }
+
+    #[test]
+    fn orders_simple_cycle_deterministically() {
+        let pairs = vec![(1, 2), (2, 3), (3, 1)];
+        let ordered = order_stations_from_pairs(&pairs).expect("cycle orders");
+        assert_eq!(ordered, vec![1, 2, 3]);
     }
 
     #[tokio::test]
