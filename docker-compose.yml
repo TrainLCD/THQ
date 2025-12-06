@@ -23,9 +23,6 @@ services:
       POSTGRES_USER: thq
       POSTGRES_PASSWORD: thq
       POSTGRES_DB: thq
-      # PGDATA defaults to /var/lib/postgresql/18/main in 18+ images
-    ports:
-      - "5432:5432"
     volumes:
       # Mount the whole postgres directory to keep the new versioned layout
       - db-data:/var/lib/postgresql
