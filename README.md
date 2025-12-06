@@ -76,7 +76,7 @@ docker compose build --no-cache
 When `database_url`/`DATABASE_URL` is provided, the server connects to PostgreSQL,
 creates the tables if missing, and stores each incoming message:
 
-- `location_events`: `id`, `device`, `state`, `station_id`, `line_id`, `latitude`, `longitude`, `accuracy`, `speed`, `timestamp`, `recorded_at`
+- `location_logs`: `id`, `device`, `state`, `station_id`, `line_id`, `segment_id`, `from_station_id`, `to_station_id`, `latitude`, `longitude`, `accuracy`, `speed`, `timestamp`, `recorded_at`
 - `log_events`: `id`, `device`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at`
 
 Without a `database_url` the server still accepts WebSocket traffic but does not

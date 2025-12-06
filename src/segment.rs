@@ -14,15 +14,16 @@ use crate::domain::{MovementState, OutgoingLocation};
 
 #[derive(Clone, Default, Debug)]
 pub struct LineTopology {
-    lines: Arc<HashMap<i32, Vec<i32>>>,
+    lines: Arc<HashMap<i32, LineGraph>>, // line_id -> graph
+}
+
+#[derive(Clone, Debug)]
+struct LineGraph {
+    stations: Vec<i32>,                    // sorted unique station ids
+    neighbors: HashMap<i32, Vec<i32>>,     // station_id -> sorted neighbors
 }
 
 impl LineTopology {
-    pub fn new(lines: HashMap<i32, Vec<i32>>) -> Self {
-        Self {
-            lines: Arc::new(lines),
-        }
-    }
 
     pub fn empty() -> Self {
         Self::default()
@@ -37,7 +38,14 @@ impl LineTopology {
     }
 
     pub fn stations(&self, line_id: i32) -> Option<&[i32]> {
-        self.lines.get(&line_id).map(|v| v.as_slice())
+        self.lines.get(&line_id).map(|g| g.stations.as_slice())
+    }
+
+    pub fn neighbors(&self, line_id: i32, station_id: i32) -> Option<&[i32]> {
+        self.lines
+            .get(&line_id)
+            .and_then(|g| g.neighbors.get(&station_id))
+            .map(|v| v.as_slice())
     }
 
     pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -102,10 +110,12 @@ impl LineTopology {
                     path_ref.display()
                 )
             })?;
-            lines.insert(line_id, v);
+            lines.insert(line_id, LineGraph::from_ordered_path(v));
         }
 
-        Ok(Self::new(lines))
+        Ok(Self {
+            lines: Arc::new(lines),
+        })
     }
 
     fn from_join_csv(path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -139,14 +149,14 @@ impl LineTopology {
 
         let mut lines = HashMap::new();
         for (line_id, pairs) in edges {
-            let ordered = order_stations_from_pairs(&pairs).with_context(|| {
+            let graph = LineGraph::from_pairs(line_id, &pairs).with_context(|| {
                 format!(
-                    "failed to build station order for line {} from {}",
+                    "failed to build station graph for line {} from {}",
                     line_id,
                     path_ref.display()
                 )
             })?;
-            lines.insert(line_id, ordered);
+            lines.insert(line_id, graph);
         }
 
         if lines.is_empty() {
@@ -156,7 +166,9 @@ impl LineTopology {
             );
         }
 
-        Ok(Self::new(lines))
+        Ok(Self {
+            lines: Arc::new(lines),
+        })
     }
 
     pub fn from_env_var(var: &str) -> anyhow::Result<Option<Self>> {
@@ -172,109 +184,65 @@ impl LineTopology {
     }
 }
 
-fn order_stations_from_pairs(pairs: &[(i32, i32)]) -> anyhow::Result<Vec<i32>> {
-    let mut adj: HashMap<i32, Vec<i32>> = HashMap::new();
-    for (a, b) in pairs {
-        adj.entry(*a).or_default().push(*b);
-        adj.entry(*b).or_default().push(*a);
+impl LineGraph {
+    fn from_ordered_path(stations: Vec<i32>) -> Self {
+        let mut neighbors: HashMap<i32, Vec<i32>> = HashMap::new();
+        for window in stations.windows(2) {
+            let a = window[0];
+            let b = window[1];
+            neighbors.entry(a).or_default().push(b);
+            neighbors.entry(b).or_default().push(a);
+        }
+        Self::finalize(neighbors)
     }
 
-    if adj.is_empty() {
-        anyhow::bail!("no station pairs found");
-    }
+    fn from_pairs(line_id: i32, pairs: &[(i32, i32)]) -> anyhow::Result<Self> {
+        if pairs.is_empty() {
+            anyhow::bail!("no station pairs found");
+        }
 
-    // Make neighbor order deterministic and deduplicate parallel edges.
-    for neighbors in adj.values_mut() {
-        neighbors.sort_unstable();
-        neighbors.dedup();
-    }
+        let mut neighbors: HashMap<i32, Vec<i32>> = HashMap::new();
+        for (a, b) in pairs {
+            neighbors.entry(*a).or_default().push(*b);
+            neighbors.entry(*b).or_default().push(*a);
+        }
 
-    let total_nodes = adj.len();
-    let mut all_nodes: Vec<i32> = adj.keys().copied().collect();
-    all_nodes.sort_unstable();
-
-    // Ensure the graph is connected; otherwise ordering is undefined.
-    {
-        let mut stack = vec![all_nodes[0]];
-        let mut seen = HashSet::new();
-        while let Some(n) = stack.pop() {
-            if !seen.insert(n) {
-                continue;
-            }
-            if let Some(neigh) = adj.get(&n) {
-                for &m in neigh {
-                    if !seen.contains(&m) {
-                        stack.push(m);
+        // Check connectivity; if disconnected, warn but still accept so inter-line connections don't break loading.
+        let stations: Vec<i32> = neighbors.keys().copied().collect();
+        let mut remaining: HashSet<i32> = stations.iter().copied().collect();
+        let mut components = 0;
+        while let Some(&start) = remaining.iter().next() {
+            components += 1;
+            let mut stack = vec![start];
+            while let Some(n) = stack.pop() {
+                if !remaining.remove(&n) {
+                    continue;
+                }
+                if let Some(ns) = neighbors.get(&n) {
+                    for &m in ns {
+                        if remaining.contains(&m) {
+                            stack.push(m);
+                        }
                     }
                 }
             }
         }
-        if seen.len() != total_nodes {
-            anyhow::bail!(
-                "station graph is disconnected (saw {} of {} stations)",
-                seen.len(),
-                total_nodes
-            );
-        }
-    }
-
-    if total_nodes == 1 {
-        return Ok(all_nodes);
-    }
-
-    // Start points: prefer endpoints (degree 1). If none, try every node (e.g., cycles).
-    let mut start_candidates: Vec<i32> = adj
-        .iter()
-        .filter(|(_, v)| v.len() == 1)
-        .map(|(k, _)| *k)
-        .collect();
-    if start_candidates.is_empty() {
-        start_candidates = all_nodes.clone();
-    }
-    start_candidates.sort_unstable();
-
-    // Backtracking search for a Hamiltonian path.
-    fn backtrack(
-        current: i32,
-        adj: &HashMap<i32, Vec<i32>>,
-        visited: &mut HashSet<i32>,
-        path: &mut Vec<i32>,
-        total: usize,
-    ) -> bool {
-        if path.len() == total {
-            return true;
+        if components > 1 {
+            warn!(line_id, components, "line graph has multiple components; keeping as-is");
         }
 
-        if let Some(neighbors) = adj.get(&current) {
-            for &next in neighbors {
-                if visited.contains(&next) {
-                    continue;
-                }
-                visited.insert(next);
-                path.push(next);
-                if backtrack(next, adj, visited, path, total) {
-                    return true;
-                }
-                path.pop();
-                visited.remove(&next);
-            }
-        }
-
-        false
+        Ok(Self::finalize(neighbors))
     }
 
-    for start in start_candidates {
-        let mut visited = HashSet::new();
-        let mut path = Vec::with_capacity(total_nodes);
-        visited.insert(start);
-        path.push(start);
-
-        if backtrack(start, &adj, &mut visited, &mut path, total_nodes) {
-            return Ok(path);
+    fn finalize(mut neighbors: HashMap<i32, Vec<i32>>) -> Self {
+        for list in neighbors.values_mut() {
+            list.sort_unstable();
+            list.dedup();
         }
+        let mut stations: Vec<i32> = neighbors.keys().copied().collect();
+        stations.sort_unstable();
+        LineGraph { stations, neighbors }
     }
-
-    anyhow::bail!("could not find a linear ordering; graph likely has branching that prevents a single path covering all stations")
 }
 
 #[derive(Clone, Debug)]
@@ -297,32 +265,15 @@ impl Segment {
 struct StationPoint {
     station_id: i32,
     line_id: i32,
-    idx: usize,
 }
 
 #[derive(Clone, Debug, Default)]
 struct DeviceTrack {
     last_station: Option<StationPoint>,
     prev_station: Option<StationPoint>,
-    last_direction: Option<Direction>,
     last_segment: Option<Segment>,
     // For eviction of idle devices.
     last_seen: u64,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Direction {
-    Forward,
-    Backward,
-}
-
-impl Direction {
-    fn step(self) -> isize {
-        match self {
-            Direction::Forward => 1,
-            Direction::Backward => -1,
-        }
-    }
 }
 
 #[derive(Clone, Default)]
@@ -372,7 +323,7 @@ impl SegmentEstimator {
                 self.handle_station_event(track, loc, stations)
             }
             MovementState::Approaching | MovementState::Moving => {
-                self.handle_continuous(track, loc, stations)
+                self.handle_continuous(track, loc)
             }
         }
     }
@@ -391,14 +342,11 @@ impl SegmentEstimator {
             }
         };
 
-        let idx = match stations.iter().position(|s| *s == station_id) {
-            Some(i) => i,
-            None => {
-                warn!(device = %loc.device, line_id = loc.line_id, station_id, "station_id not found in topology; skipping segment inference");
-                self.reset_track_if_line_changed(track, loc.line_id);
-                return None;
-            }
-        };
+        if !stations.contains(&station_id) {
+            warn!(device = %loc.device, line_id = loc.line_id, station_id, "station_id not found in topology; skipping segment inference");
+            self.reset_track_if_line_changed(track, loc.line_id);
+            return None;
+        }
 
         self.reset_track_if_line_changed(track, loc.line_id);
 
@@ -410,18 +358,20 @@ impl SegmentEstimator {
         let current = StationPoint {
             station_id,
             line_id: loc.line_id,
-            idx,
         };
 
         let segment = prev.as_ref().and_then(|prev_station| {
-            direction_from_indices(prev_station.idx, idx).map(|dir| {
-                track.last_direction = Some(dir);
-                Segment {
+            let neighbors = self.topology.neighbors(loc.line_id, prev_station.station_id);
+            if neighbors.map_or(false, |n| n.contains(&station_id)) {
+                Some(Segment {
                     line_id: loc.line_id,
                     from_station_id: prev_station.station_id,
                     to_station_id: station_id,
-                }
-            })
+                })
+            } else {
+                warn!(device = %loc.device, line_id = loc.line_id, from = prev_station.station_id, to = station_id, "stations not adjacent in topology; segment not inferred");
+                None
+            }
         });
 
         if segment.is_none() {
@@ -441,7 +391,6 @@ impl SegmentEstimator {
         &self,
         track: &mut DeviceTrack,
         loc: &OutgoingLocation,
-        stations: &[i32],
     ) -> Option<Segment> {
         // If the line changes mid-stream, reset state.
         if self.track_on_different_line(track, loc.line_id) {
@@ -453,28 +402,35 @@ impl SegmentEstimator {
             return None;
         };
 
-        if let Some(seg) = track
-            .last_segment
-            .as_ref()
-            .filter(|s| s.line_id == loc.line_id && s.to_station_id != last_station.station_id)
-            .cloned()
-        {
-            return Some(seg);
-        }
+        let neighbors = match self.topology.neighbors(loc.line_id, last_station.station_id) {
+            Some(n) if !n.is_empty() => n,
+            _ => {
+                warn!(
+                    device = %loc.device,
+                    line_id = loc.line_id,
+                    station_id = last_station.station_id,
+                    "no neighbor station found for continuous state"
+                );
+                return None;
+            }
+        };
 
-        let direction = track.last_direction?;
-        let next_idx = last_station.idx as isize + direction.step();
-        if next_idx < 0 || next_idx >= stations.len() as isize {
-            warn!(
-                device = %loc.device,
-                line_id = loc.line_id,
-                station_id = last_station.station_id,
-                "no neighbor station found for continuous state; out of bounds"
-            );
+        // Prefer continuing away from the previous station to maintain direction.
+        let preferred_avoid = track.prev_station.as_ref().map(|p| p.station_id);
+        let mut candidates: Vec<i32> = neighbors
+            .iter()
+            .copied()
+            .filter(|n| Some(*n) != preferred_avoid)
+            .collect();
+
+        if candidates.is_empty() {
+            // If only the previous station exists, we can't infer forward motion.
             return None;
         }
 
-        let to_station_id = stations[next_idx as usize];
+        // Deterministic pick: smallest station id.
+        candidates.sort_unstable();
+        let to_station_id = candidates[0];
         let seg = Segment {
             line_id: loc.line_id,
             from_station_id: last_station.station_id,
@@ -503,21 +459,12 @@ impl SegmentEstimator {
     fn reset_track(&self, track: &mut DeviceTrack) {
         track.last_station = None;
         track.prev_station = None;
-        track.last_direction = None;
         track.last_segment = None;
     }
 
     fn prune_stale_tracks(tracks: &mut HashMap<String, DeviceTrack>, now: u64) {
         const TRACK_TTL_SECS: u64 = 6 * 60 * 60; // 6 hours
         tracks.retain(|_, t| now.saturating_sub(t.last_seen) <= TRACK_TTL_SECS);
-    }
-}
-
-fn direction_from_indices(prev_idx: usize, curr_idx: usize) -> Option<Direction> {
-    match curr_idx.cmp(&prev_idx) {
-        std::cmp::Ordering::Greater => Some(Direction::Forward),
-        std::cmp::Ordering::Less => Some(Direction::Backward),
-        std::cmp::Ordering::Equal => None,
     }
 }
 
@@ -528,9 +475,11 @@ mod tests {
     use uuid::Uuid;
 
     fn topo() -> LineTopology {
-        let mut lines = HashMap::new();
-        lines.insert(1, vec![101, 102, 103, 104]);
-        LineTopology::new(lines)
+        let mut graphs = HashMap::new();
+        graphs.insert(1, LineGraph::from_ordered_path(vec![101, 102, 103, 104]));
+        LineTopology {
+            lines: Arc::new(graphs),
+        }
     }
 
     #[tokio::test]
@@ -627,17 +576,32 @@ mod tests {
     }
 
     #[test]
-    fn rejects_branching_graph() {
-        // 1-2-3 and 2-4 share a fork at 2; cannot form single path without skipping.
-        let pairs = vec![(1, 2), (2, 3), (2, 4)];
-        assert!(order_stations_from_pairs(&pairs).is_err());
+    fn builds_topology_with_branching_graph() {
+        let path = std::env::temp_dir().join(format!("join_branch_{}.csv", Uuid::new_v4()));
+        fs::write(&path, "line_cd,station_cd1,station_cd2\n1,1,2\n1,2,3\n1,2,4\n").unwrap();
+
+        let topo = LineTopology::from_file(&path).expect("csv topology loads");
+        let stations = topo.stations(1).expect("line exists");
+        assert_eq!(stations, &[1, 2, 3, 4]);
+        let neighbors = topo.neighbors(1, 2).expect("has neighbors");
+        assert_eq!(neighbors, &[1, 3, 4]);
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn orders_simple_cycle_deterministically() {
-        let pairs = vec![(1, 2), (2, 3), (3, 1)];
-        let ordered = order_stations_from_pairs(&pairs).expect("cycle orders");
-        assert_eq!(ordered, vec![1, 2, 3]);
+    fn builds_topology_with_disconnected_components() {
+        let path = std::env::temp_dir().join(format!("join_disconnected_{}.csv", Uuid::new_v4()));
+        // two components: 1-2 and 10-11
+        fs::write(&path, "line_cd,station_cd1,station_cd2\n1,1,2\n1,10,11\n").unwrap();
+
+        let topo = LineTopology::from_file(&path).expect("csv topology loads");
+        let stations = topo.stations(1).expect("line exists");
+        assert_eq!(stations, &[1, 2, 10, 11]);
+        assert_eq!(topo.neighbors(1, 1).unwrap(), &[2]);
+        assert_eq!(topo.neighbors(1, 10).unwrap(), &[11]);
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
