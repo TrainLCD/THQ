@@ -158,7 +158,7 @@ pub enum ErrorType {
     PayloadParseError,
     AccuracyLow,
     InvalidCoords,
-    Unknown,
+    _Unknown,
 }
 
 #[cfg(test)]

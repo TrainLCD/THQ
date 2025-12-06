@@ -55,7 +55,7 @@ impl Storage {
 
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS location_events (
+            CREATE TABLE IF NOT EXISTS location_logs (
                 id TEXT PRIMARY KEY,
                 device TEXT NOT NULL,
                 state TEXT NOT NULL,
@@ -77,21 +77,21 @@ impl Storage {
         .await?;
 
         // best-effort migrations for previously created tables
-        sqlx::query("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS station_id INTEGER;")
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS station_id INTEGER;")
             .execute(pool)
             .await?;
-        sqlx::query("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS line_id INTEGER;")
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS line_id INTEGER;")
             .execute(pool)
             .await?;
-        sqlx::query("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS segment_id TEXT;")
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS segment_id TEXT;")
             .execute(pool)
             .await?;
         sqlx::query(
-            "ALTER TABLE location_events ADD COLUMN IF NOT EXISTS from_station_id INTEGER;",
+            "ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS from_station_id INTEGER;",
         )
         .execute(pool)
         .await?;
-        sqlx::query("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS to_station_id INTEGER;")
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS to_station_id INTEGER;")
             .execute(pool)
             .await?;
 
@@ -112,16 +112,17 @@ impl Storage {
         .await?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_location_events_device ON location_events (device);",
+            "CREATE INDEX IF NOT EXISTS idx_location_logs_device ON location_logs (device);",
         )
         .execute(pool)
         .await?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_location_events_segment ON location_events (segment_id);",
+            "CREATE INDEX IF NOT EXISTS idx_location_logs_segment ON location_logs (segment_id);",
         )
         .execute(pool)
         .await?;
+
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_log_events_device ON log_events (device);")
             .execute(pool)
@@ -138,7 +139,7 @@ impl Storage {
         let ts = i64::try_from(loc.timestamp).unwrap_or(i64::MAX);
 
         sqlx::query(
-            "INSERT INTO location_events (id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO location_logs (id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&loc.id)
         .bind(&loc.device)
@@ -155,7 +156,7 @@ impl Storage {
         .bind(ts)
         .execute(pool)
         .await
-        .context("failed to insert location event")?;
+        .context("failed to insert location log")?;
 
         Ok(())
     }
@@ -212,7 +213,7 @@ impl Storage {
                     (to_timestamp(timestamp / 1000.0) AT TIME ZONE 'UTC')::timestamptz AS ts,
                     accuracy,
                     speed
-                FROM location_events
+                FROM location_logs
                 WHERE line_id = $3
                   AND to_timestamp(timestamp / 1000.0) >= $4
                   AND to_timestamp(timestamp / 1000.0) < $5
