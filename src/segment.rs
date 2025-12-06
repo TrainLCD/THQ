@@ -5,14 +5,14 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tracing::warn;
 
 use crate::domain::{MovementState, OutgoingLocation};
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct LineTopology {
     lines: Arc<HashMap<i32, Vec<i32>>>,
 }
@@ -52,8 +52,28 @@ impl LineTopology {
             "json" => Self::from_json_file(path_ref),
             "csv" => Self::from_join_csv(path_ref),
             _ => {
-                // try json then csv as fallback for convenience
-                Self::from_json_file(path_ref).or_else(|_| Self::from_join_csv(path_ref))
+                warn!(
+                    path = %path_ref.display(),
+                    ext = %ext,
+                    "unknown topology file extension; trying JSON then CSV fallback"
+                );
+
+                let json_err = match Self::from_json_file(path_ref) {
+                    Ok(v) => return Ok(v),
+                    Err(e) => e,
+                };
+
+                let csv_err = match Self::from_join_csv(path_ref) {
+                    Ok(v) => return Ok(v),
+                    Err(e) => e,
+                };
+
+                Err(anyhow!(
+                    "failed to load topology at {} (json error: {}; csv error: {})",
+                    path_ref.display(),
+                    json_err,
+                    csv_err
+                ))
             }
         }
     }
@@ -618,6 +638,19 @@ mod tests {
         let pairs = vec![(1, 2), (2, 3), (3, 1)];
         let ordered = order_stations_from_pairs(&pairs).expect("cycle orders");
         assert_eq!(ordered, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn unknown_extension_reports_both_errors() {
+        let path = std::env::temp_dir().join(format!("topo_{}.foo", Uuid::new_v4()));
+        fs::write(&path, "not json or csv").unwrap();
+
+        let err = LineTopology::from_file(&path).expect_err("should fail with both errors");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("json error"));
+        assert!(msg.contains("csv error"));
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[tokio::test]
