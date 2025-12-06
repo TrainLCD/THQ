@@ -694,7 +694,7 @@ mod tests {
             "device": "dev",
             "state": "moving",
             "lineId": 100,
-            "station_id": 9,
+            "stationId": 9,
             "coords": {
                 "latitude": 35.0,
                 "longitude": 139.0,
@@ -729,6 +729,7 @@ mod tests {
     async fn approaching_drops_station_id() {
         let hub = Arc::new(TelemetryHub::new(10));
         let storage = Storage::default();
+        let segmenter = SegmentEstimator::new(LineTopology::empty());
         let (tx, _rx) = mpsc::channel(4);
         let mut subscribed = false;
 
@@ -736,8 +737,8 @@ mod tests {
             "type": "location_update",
             "device": "dev",
             "state": "approaching",
-            "station_id": 11,
-            "line_id": 100,
+            "stationId": 11,
+            "lineId": 100,
             "coords": {
                 "latitude": 35.0,
                 "longitude": 139.0,
@@ -752,6 +753,7 @@ mod tests {
             &payload,
             &hub,
             &storage,
+            &segmenter,
             &tx,
             Uuid::new_v4(),
             &mut subscribed,
