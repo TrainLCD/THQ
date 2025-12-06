@@ -29,6 +29,7 @@ use crate::{
         OutgoingError, OutgoingLocation, OutgoingLog, OutgoingMessage,
     },
     graphql::{build_schema, AppSchema},
+    segment::{LineTopology, SegmentEstimator},
     state::TelemetryHub,
     storage::Storage,
 };
@@ -47,12 +48,37 @@ struct AppState {
     storage: Storage,
     auth: AuthConfig,
     schema: AppSchema,
+    segmenter: SegmentEstimator,
 }
 
 pub async fn run_server(config: Config) -> anyhow::Result<()> {
     let hub = Arc::new(TelemetryHub::new(config.ring_size));
     let storage = Storage::connect(config.database_url.clone()).await?;
     let schema = build_schema(storage.clone());
+
+    let topology = match LineTopology::from_env_var("THQ_LINE_TOPOLOGY_PATH")? {
+        Some(topo) => {
+            tracing::info!(
+                lines = topo.line_count(),
+                "loaded line topology for segment inference"
+            );
+            topo
+        }
+        None => {
+            tracing::warn!(
+                "segment inference disabled: set THQ_LINE_TOPOLOGY_PATH to a JSON file mapping line_id to ordered station_id array"
+            );
+            LineTopology::empty()
+        }
+    };
+
+    let segmenter = SegmentEstimator::new(topology.clone());
+
+    if topology.is_empty() {
+        tracing::warn!(
+            "segment inference will persist NULL segment fields because no topology data is loaded; set THQ_LINE_TOPOLOGY_PATH to enable"
+        );
+    }
 
     if storage.enabled() {
         tracing::info!("database persistence enabled");
@@ -72,6 +98,7 @@ pub async fn run_server(config: Config) -> anyhow::Result<()> {
             required: config.ws_auth_required,
         },
         schema: schema.clone(),
+        segmenter: segmenter.clone(),
     };
 
     let app = Router::new()
@@ -140,6 +167,7 @@ async fn graphql_playground() -> impl IntoResponse {
 async fn handle_socket(socket: WebSocket, peer: SocketAddr, state: AppState) {
     let hub = state.hub.clone();
     let storage = state.storage.clone();
+    let segmenter = state.segmenter.clone();
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (tx, mut rx) = mpsc::channel::<Message>(256);
     let client_id = Uuid::new_v4();
@@ -158,8 +186,16 @@ async fn handle_socket(socket: WebSocket, peer: SocketAddr, state: AppState) {
     while let Some(msg) = ws_rx.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                if let Err(err) =
-                    handle_text(&text, &hub, &storage, &tx, client_id, &mut subscribed).await
+                if let Err(err) = handle_text(
+                    &text,
+                    &hub,
+                    &storage,
+                    &segmenter,
+                    &tx,
+                    client_id,
+                    &mut subscribed,
+                )
+                .await
                 {
                     tracing::warn!(%peer, ?err, "failed to handle text frame");
                 }
@@ -268,6 +304,7 @@ async fn handle_text(
     text: &str,
     hub: &Arc<TelemetryHub>,
     storage: &Storage,
+    segmenter: &SegmentEstimator,
     tx: &mpsc::Sender<Message>,
     client_id: Uuid,
     subscribed: &mut bool,
@@ -326,6 +363,14 @@ async fn handle_text(
                         return Ok(());
                     }
                 };
+
+            let message = match message {
+                OutgoingMessage::LocationUpdate(loc) => {
+                    let enriched = segmenter.annotate(loc).await;
+                    OutgoingMessage::LocationUpdate(enriched)
+                }
+                other => other,
+            };
 
             match serde_json::to_string(&message) {
                 Ok(serialized) => hub.broadcast(serialized).await,
@@ -458,6 +503,9 @@ fn normalize_location(
             speed,
         },
         timestamp,
+        segment_id: None,
+        from_station_id: None,
+        to_station_id: None,
     }))
 }
 
@@ -556,6 +604,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::segment::{LineTopology, SegmentEstimator};
     use axum::extract::ws::Message;
     use serde_json::Value;
     use tokio::sync::mpsc;
@@ -607,6 +656,7 @@ mod tests {
     async fn handle_text_sends_json_parse_error() {
         let hub = Arc::new(TelemetryHub::new(10));
         let storage = Storage::default();
+        let segmenter = SegmentEstimator::new(LineTopology::empty());
         let (tx, mut rx) = mpsc::channel(4);
         let mut subscribed = false;
 
@@ -614,6 +664,7 @@ mod tests {
             "not-json",
             &hub,
             &storage,
+            &segmenter,
             &tx,
             Uuid::new_v4(),
             &mut subscribed,
@@ -634,6 +685,7 @@ mod tests {
     async fn location_update_is_broadcast_and_buffered() {
         let hub = Arc::new(TelemetryHub::new(10));
         let storage = Storage::default();
+        let segmenter = SegmentEstimator::new(LineTopology::empty());
         let (tx, _rx) = mpsc::channel(4);
         let mut subscribed = false;
 
@@ -641,8 +693,8 @@ mod tests {
             "type": "location_update",
             "device": "dev",
             "state": "moving",
-            "line_id": 100,
-            "station_id": 9,
+            "lineId": 100,
+            "stationId": 9,
             "coords": {
                 "latitude": 35.0,
                 "longitude": 139.0,
@@ -657,6 +709,7 @@ mod tests {
             &payload,
             &hub,
             &storage,
+            &segmenter,
             &tx,
             Uuid::new_v4(),
             &mut subscribed,
@@ -676,6 +729,7 @@ mod tests {
     async fn approaching_drops_station_id() {
         let hub = Arc::new(TelemetryHub::new(10));
         let storage = Storage::default();
+        let segmenter = SegmentEstimator::new(LineTopology::empty());
         let (tx, _rx) = mpsc::channel(4);
         let mut subscribed = false;
 
@@ -683,8 +737,8 @@ mod tests {
             "type": "location_update",
             "device": "dev",
             "state": "approaching",
-            "station_id": 11,
-            "line_id": 100,
+            "stationId": 11,
+            "lineId": 100,
             "coords": {
                 "latitude": 35.0,
                 "longitude": 139.0,
@@ -699,6 +753,7 @@ mod tests {
             &payload,
             &hub,
             &storage,
+            &segmenter,
             &tx,
             Uuid::new_v4(),
             &mut subscribed,
@@ -717,6 +772,7 @@ mod tests {
     async fn log_message_is_broadcast_and_buffered() {
         let hub = Arc::new(TelemetryHub::new(10));
         let storage = Storage::default();
+        let segmenter = SegmentEstimator::new(LineTopology::empty());
         let (tx, _rx) = mpsc::channel(4);
         let mut subscribed = false;
 
@@ -736,6 +792,7 @@ mod tests {
             &payload,
             &hub,
             &storage,
+            &segmenter,
             &tx,
             Uuid::new_v4(),
             &mut subscribed,

@@ -1,6 +1,7 @@
 mod config;
 mod domain;
 mod graphql;
+mod segment;
 mod server;
 mod state;
 mod storage;

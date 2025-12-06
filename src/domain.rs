@@ -85,9 +85,9 @@ pub enum IncomingMessage {
         id: Option<String>,
         device: String,
         state: MovementState,
-        #[serde(default, alias = "stationId")]
+        #[serde(default, rename = "stationId")]
         station_id: Option<i32>,
-        #[serde(alias = "lineId")]
+        #[serde(rename = "lineId")]
         line_id: i32,
         coords: Coords,
         timestamp: u64,
@@ -118,6 +118,9 @@ pub struct OutgoingLocation {
     pub line_id: i32,
     pub coords: OutgoingCoords,
     pub timestamp: u64,
+    pub segment_id: Option<String>,
+    pub from_station_id: Option<i32>,
+    pub to_station_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -175,30 +178,28 @@ mod tests {
     }
 
     #[test]
-    fn incoming_location_accepts_camel_case_ids() {
+    fn incoming_location_update_accepts_snake_type_and_camel_fields() {
         let json = r#"{
             "type":"location_update",
             "device":"dev",
             "state":"moving",
-            "stationId":101,
-            "lineId":202,
-            "coords": {"latitude":1.0,"longitude":2.0,"speed":3.0},
-            "timestamp": 1
+            "lineId":7,
+            "stationId":42,
+            "coords":{"latitude":1.0,"longitude":2.0,"accuracy":null,"speed":3.0},
+            "timestamp":123
         }"#;
 
         let v: IncomingMessage = serde_json::from_str(json).unwrap();
         match v {
             IncomingMessage::LocationUpdate {
-                station_id,
                 line_id,
-                coords,
+                station_id,
                 ..
             } => {
-                assert_eq!(station_id, Some(101));
-                assert_eq!(line_id, 202);
-                assert_eq!(coords.speed, Some(3.0));
+                assert_eq!(line_id, 7);
+                assert_eq!(station_id, Some(42));
             }
-            _ => panic!("expected location_update variant"),
+            _ => panic!("expected location update"),
         }
     }
 
@@ -217,6 +218,9 @@ mod tests {
                 speed: 3.0,
             },
             timestamp: 42,
+            segment_id: None,
+            from_station_id: None,
+            to_station_id: None,
         });
 
         let json = serde_json::to_value(&msg).unwrap();

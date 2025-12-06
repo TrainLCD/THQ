@@ -9,7 +9,8 @@ services:
       THQ_WS_AUTH_TOKEN: ${THQ_WS_AUTH_TOKEN:?set in .env or shell}
       THQ_WS_AUTH_REQUIRED: ${THQ_WS_AUTH_REQUIRED:-true}
       # RUST_LOG: debug,thq_server=debug
-      RUST_BACKTRACE: 1
+      # RUST_BACKTRACE: 1
+      THQ_LINE_TOPOLOGY_PATH: /app/static/join.csv
     ports:
       - "8080:8080"
     restart: unless-stopped
