@@ -19,12 +19,11 @@ pub struct LineTopology {
 
 #[derive(Clone, Debug)]
 struct LineGraph {
-    stations: Vec<i32>,                    // sorted unique station ids
-    neighbors: HashMap<i32, Vec<i32>>,     // station_id -> sorted neighbors
+    stations: Vec<i32>,                // sorted unique station ids
+    neighbors: HashMap<i32, Vec<i32>>, // station_id -> sorted neighbors
 }
 
 impl LineTopology {
-
     pub fn empty() -> Self {
         Self::default()
     }
@@ -228,7 +227,10 @@ impl LineGraph {
             }
         }
         if components > 1 {
-            warn!(line_id, components, "line graph has multiple components; keeping as-is");
+            warn!(
+                line_id,
+                components, "line graph has multiple components; keeping as-is"
+            );
         }
 
         Ok(Self::finalize(neighbors))
@@ -241,7 +243,10 @@ impl LineGraph {
         }
         let mut stations: Vec<i32> = neighbors.keys().copied().collect();
         stations.sort_unstable();
-        LineGraph { stations, neighbors }
+        LineGraph {
+            stations,
+            neighbors,
+        }
     }
 }
 
@@ -309,9 +314,7 @@ impl SegmentEstimator {
     }
 
     async fn estimate_segment(&self, loc: &OutgoingLocation) -> Option<Segment> {
-        let Some(stations) = self.topology.stations(loc.line_id) else {
-            return None;
-        };
+        let stations = self.topology.stations(loc.line_id)?;
 
         let mut tracks = self.tracks.write().await;
         Self::prune_stale_tracks(&mut tracks, loc.timestamp);
@@ -362,7 +365,7 @@ impl SegmentEstimator {
 
         let segment = prev.as_ref().and_then(|prev_station| {
             let neighbors = self.topology.neighbors(loc.line_id, prev_station.station_id);
-            if neighbors.map_or(false, |n| n.contains(&station_id)) {
+            if neighbors.is_some_and(|n| n.contains(&station_id)) {
                 Some(Segment {
                     line_id: loc.line_id,
                     from_station_id: prev_station.station_id,
@@ -398,11 +401,12 @@ impl SegmentEstimator {
             return None;
         }
 
-        let Some(last_station) = track.last_station.as_ref() else {
-            return None;
-        };
+        let last_station = track.last_station.as_ref()?;
 
-        let neighbors = match self.topology.neighbors(loc.line_id, last_station.station_id) {
+        let neighbors = match self
+            .topology
+            .neighbors(loc.line_id, last_station.station_id)
+        {
             Some(n) if !n.is_empty() => n,
             _ => {
                 warn!(
@@ -502,6 +506,8 @@ mod tests {
             segment_id: None,
             from_station_id: None,
             to_station_id: None,
+            battery_level: None,
+            battery_state: None,
         };
 
         let second = OutgoingLocation {
@@ -539,6 +545,8 @@ mod tests {
             segment_id: None,
             from_station_id: None,
             to_station_id: None,
+            battery_level: None,
+            battery_state: None,
         };
 
         let second = OutgoingLocation {
@@ -578,7 +586,11 @@ mod tests {
     #[test]
     fn builds_topology_with_branching_graph() {
         let path = std::env::temp_dir().join(format!("join_branch_{}.csv", Uuid::new_v4()));
-        fs::write(&path, "line_cd,station_cd1,station_cd2\n1,1,2\n1,2,3\n1,2,4\n").unwrap();
+        fs::write(
+            &path,
+            "line_cd,station_cd1,station_cd2\n1,1,2\n1,2,3\n1,2,4\n",
+        )
+        .unwrap();
 
         let topo = LineTopology::from_file(&path).expect("csv topology loads");
         let stations = topo.stations(1).expect("line exists");
@@ -637,6 +649,8 @@ mod tests {
             segment_id: None,
             from_station_id: None,
             to_station_id: None,
+            battery_level: None,
+            battery_state: None,
         };
 
         // first annotate stores track
@@ -676,6 +690,8 @@ mod tests {
             segment_id: None,
             from_station_id: None,
             to_station_id: None,
+            battery_level: None,
+            battery_state: None,
         };
 
         let annotated = estimator.annotate(loc).await;

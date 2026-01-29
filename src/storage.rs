@@ -4,7 +4,9 @@ use anyhow::Context;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use tracing::info;
 
-use crate::domain::{LogLevel, LogType, MovementState, OutgoingLocation, OutgoingLog};
+use crate::domain::{
+    BatteryState, LogLevel, LogType, MovementState, OutgoingLocation, OutgoingLog,
+};
 
 #[derive(Clone, sqlx::FromRow)]
 pub struct LineAccuracyBucketRow {
@@ -69,6 +71,8 @@ impl Storage {
                 accuracy DOUBLE PRECISION,
                 speed DOUBLE PRECISION,
                 timestamp BIGINT NOT NULL,
+                battery_level DOUBLE PRECISION,
+                battery_state SMALLINT,
                 recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
             "#,
@@ -86,16 +90,22 @@ impl Storage {
         sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS segment_id TEXT;")
             .execute(pool)
             .await?;
-        sqlx::query(
-            "ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS from_station_id INTEGER;",
-        )
-        .execute(pool)
-        .await?;
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS from_station_id INTEGER;")
+            .execute(pool)
+            .await?;
         sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS to_station_id INTEGER;")
             .execute(pool)
             .await?;
         // Allow NULL in speed column (previously NOT NULL); idempotent on columns already nullable.
         sqlx::query("ALTER TABLE location_logs ALTER COLUMN speed DROP NOT NULL;")
+            .execute(pool)
+            .await?;
+        sqlx::query(
+            "ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS battery_level DOUBLE PRECISION;",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS battery_state SMALLINT;")
             .execute(pool)
             .await?;
 
@@ -127,7 +137,6 @@ impl Storage {
         .execute(pool)
         .await?;
 
-
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_log_events_device ON log_events (device);")
             .execute(pool)
             .await?;
@@ -143,7 +152,7 @@ impl Storage {
         let ts = i64::try_from(loc.timestamp).unwrap_or(i64::MAX);
 
         sqlx::query(
-            "INSERT INTO location_logs (id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO location_logs (id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp, battery_level, battery_state) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&loc.id)
         .bind(&loc.device)
@@ -158,6 +167,8 @@ impl Storage {
         .bind(loc.coords.accuracy)
         .bind(loc.coords.speed)
         .bind(ts)
+        .bind(loc.battery_level)
+        .bind(loc.battery_state.as_ref().map(battery_state_i16))
         .execute(pool)
         .await
         .context("failed to insert location log")?;
@@ -251,6 +262,15 @@ fn log_type_str(ty: &LogType) -> &'static str {
 
 fn log_level_str(level: &LogLevel) -> &'static str {
     level.as_str()
+}
+
+fn battery_state_i16(state: &BatteryState) -> i16 {
+    match state {
+        BatteryState::Unknown => 0,
+        BatteryState::Unplugged => 1,
+        BatteryState::Charging => 2,
+        BatteryState::Full => 3,
+    }
 }
 
 fn mask_password(url: &str) -> String {

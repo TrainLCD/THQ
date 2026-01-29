@@ -230,6 +230,14 @@ components:
           format: int64
           description: Unix timestamp in milliseconds
           example: 1706000000000
+        batteryLevel:
+          type: number
+          format: double
+          nullable: true
+          description: Battery level as a decimal (0.0 to 1.0)
+          example: 0.85
+        batteryState:
+          $ref: '#/components/schemas/BatteryState'
 
     LogRequest:
       type: object
@@ -339,6 +347,20 @@ components:
         - warn
         - error
       description: Log severity level
+
+    BatteryState:
+      type: integer
+      enum:
+        - 0
+        - 1
+        - 2
+        - 3
+      description: |
+        Battery state of the device:
+        - `0` (UNKNOWN): Battery state is unknown or inaccessible
+        - `1` (UNPLUGGED): Battery is not charging or discharging
+        - `2` (CHARGING): Battery is charging
+        - `3` (FULL): Battery level is full
 
     ApiResponse:
       type: object
