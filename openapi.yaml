@@ -237,7 +237,9 @@ components:
           description: Battery level as a decimal (0.0 to 1.0)
           example: 0.85
         batteryState:
-          $ref: '#/components/schemas/BatteryState'
+          nullable: true
+          oneOf:
+            - $ref: '#/components/schemas/BatteryState'
 
     LogRequest:
       type: object

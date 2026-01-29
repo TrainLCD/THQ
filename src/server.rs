@@ -323,6 +323,20 @@ async fn post_location(
         }
     }
 
+    if let Some(level) = req.battery_level {
+        if !(0.0..=1.0).contains(&level) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse {
+                    ok: false,
+                    id: None,
+                    warning: None,
+                    error: Some("battery_level must be between 0.0 and 1.0".to_string()),
+                }),
+            );
+        }
+    }
+
     // station_id is only meaningful when not moving/approaching
     let station_id = if matches!(
         req.state,
