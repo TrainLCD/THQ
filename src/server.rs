@@ -279,9 +279,8 @@ async fn post_location(
         );
     }
 
-    let speed = req.coords.speed;
-    if let Some(s) = speed {
-        if !s.is_finite() {
+    let speed = match req.coords.speed {
+        Some(s) if !s.is_finite() => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(ApiResponse {
@@ -292,7 +291,9 @@ async fn post_location(
                 }),
             );
         }
-    }
+        Some(s) if s < 0.0 => None,
+        other => other,
+    };
 
     if let Some(acc) = req.coords.accuracy {
         if !acc.is_finite() {
