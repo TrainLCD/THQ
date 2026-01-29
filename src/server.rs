@@ -10,7 +10,10 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         ConnectInfo, FromRequestParts, State,
     },
-    http::{header::SEC_WEBSOCKET_PROTOCOL, header::AUTHORIZATION, request::Parts, HeaderMap, StatusCode},
+    http::{
+        header::AUTHORIZATION, header::SEC_WEBSOCKET_PROTOCOL, request::Parts, HeaderMap,
+        StatusCode,
+    },
     response::{Html, IntoResponse, Json},
     routing::{get, post},
     Router,
@@ -320,8 +323,25 @@ async fn post_location(
         }
     }
 
+    if let Some(level) = req.battery_level {
+        if !(0.0..=1.0).contains(&level) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse {
+                    ok: false,
+                    id: None,
+                    warning: None,
+                    error: Some("battery_level must be between 0.0 and 1.0".to_string()),
+                }),
+            );
+        }
+    }
+
     // station_id is only meaningful when not moving/approaching
-    let station_id = if matches!(req.state, MovementState::Moving | MovementState::Approaching) {
+    let station_id = if matches!(
+        req.state,
+        MovementState::Moving | MovementState::Approaching
+    ) {
         None
     } else {
         req.station_id
@@ -344,6 +364,8 @@ async fn post_location(
         segment_id: None,
         from_station_id: None,
         to_station_id: None,
+        battery_level: req.battery_level,
+        battery_state: req.battery_state,
     };
 
     // Annotate with segment info
@@ -369,9 +391,7 @@ async fn post_location(
         .accuracy
         .filter(|v| *v > BAD_ACCURACY_THRESHOLD)
         .map(|acc| {
-            format!(
-                "reported accuracy {acc:.1}m exceeds threshold {BAD_ACCURACY_THRESHOLD:.0}m"
-            )
+            format!("reported accuracy {acc:.1}m exceeds threshold {BAD_ACCURACY_THRESHOLD:.0}m")
         });
 
     (
@@ -787,9 +807,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = to_bytes(response.into_body())
-            .await
-            .unwrap();
+        let body = to_bytes(response.into_body()).await.unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["ok"], true);
         assert!(v["id"].is_string());
@@ -826,9 +844,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = to_bytes(response.into_body())
-            .await
-            .unwrap();
+        let body = to_bytes(response.into_body()).await.unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["ok"], true);
         assert_eq!(v["id"], "custom-id-123");
@@ -865,9 +881,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = to_bytes(response.into_body())
-            .await
-            .unwrap();
+        let body = to_bytes(response.into_body()).await.unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["ok"], true);
         assert!(v["warning"].as_str().unwrap().contains("accuracy"));
@@ -902,9 +916,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-        let body = to_bytes(response.into_body())
-            .await
-            .unwrap();
+        let body = to_bytes(response.into_body()).await.unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["ok"], false);
         assert!(v["error"].as_str().unwrap().contains("out of range"));
@@ -940,9 +952,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-        let body = to_bytes(response.into_body())
-            .await
-            .unwrap();
+        let body = to_bytes(response.into_body()).await.unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["ok"], false);
         assert!(v["error"].as_str().unwrap().contains("accuracy"));
@@ -1014,9 +1024,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = to_bytes(response.into_body())
-            .await
-            .unwrap();
+        let body = to_bytes(response.into_body()).await.unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["ok"], true);
         assert!(v["id"].is_string());
@@ -1050,9 +1058,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-        let body = to_bytes(response.into_body())
-            .await
-            .unwrap();
+        let body = to_bytes(response.into_body()).await.unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["ok"], false);
         assert!(v["error"].as_str().unwrap().contains("message"));

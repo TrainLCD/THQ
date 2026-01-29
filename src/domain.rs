@@ -1,4 +1,14 @@
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
+
+#[derive(Debug, Clone, Serialize_repr, Deserialize_repr, PartialEq, Eq)]
+#[repr(u8)]
+pub enum BatteryState {
+    Unknown = 0,
+    Unplugged = 1,
+    Charging = 2,
+    Full = 3,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -95,6 +105,10 @@ pub struct LocationUpdateRequest {
     pub line_id: i32,
     pub coords: Coords,
     pub timestamp: u64,
+    #[serde(default)]
+    pub battery_level: Option<f64>,
+    #[serde(default)]
+    pub battery_state: Option<BatteryState>,
 }
 
 /// REST API用のログリクエスト
@@ -128,6 +142,8 @@ pub struct OutgoingLocation {
     pub segment_id: Option<String>,
     pub from_station_id: Option<i32>,
     pub to_station_id: Option<i32>,
+    pub battery_level: Option<f64>,
+    pub battery_state: Option<BatteryState>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -213,6 +229,8 @@ mod tests {
             segment_id: None,
             from_station_id: None,
             to_station_id: None,
+            battery_level: None,
+            battery_state: None,
         });
 
         let json = serde_json::to_value(&msg).unwrap();
