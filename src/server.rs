@@ -210,11 +210,13 @@ impl FromRequestParts<AppState> for Authenticated {
 
         let token = auth_header
             .and_then(|h| {
-                if h.len() >= 7 && h[..7].eq_ignore_ascii_case("bearer ") {
-                    Some(&h[7..])
-                } else {
-                    None
-                }
+                h.get(..7).and_then(|pref| {
+                    if pref.eq_ignore_ascii_case("bearer ") {
+                        h.get(7..)
+                    } else {
+                        None
+                    }
+                })
             })
             .ok_or_else(|| {
                 (
