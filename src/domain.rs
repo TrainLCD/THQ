@@ -80,25 +80,32 @@ pub enum IncomingMessage {
         #[serde(default)]
         device: Option<String>,
     },
-    LocationUpdate {
-        #[serde(default)]
-        id: Option<String>,
-        device: String,
-        state: MovementState,
-        #[serde(default, rename = "stationId")]
-        station_id: Option<i32>,
-        #[serde(rename = "lineId")]
-        line_id: i32,
-        coords: Coords,
-        timestamp: u64,
-    },
-    Log {
-        #[serde(default)]
-        id: Option<String>,
-        device: String,
-        timestamp: u64,
-        log: LogBody,
-    },
+}
+
+/// REST API用の位置情報リクエスト
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocationUpdateRequest {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub device: String,
+    pub state: MovementState,
+    #[serde(default)]
+    pub station_id: Option<i32>,
+    pub line_id: i32,
+    pub coords: Coords,
+    pub timestamp: u64,
+}
+
+/// REST API用のログリクエスト
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogRequest {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub device: String,
+    pub timestamp: u64,
+    pub log: LogBody,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,10 +162,6 @@ pub struct ErrorBody {
 pub enum ErrorType {
     WebsocketMessageError,
     JsonParseError,
-    PayloadParseError,
-    AccuracyLow,
-    InvalidCoords,
-    _Unknown,
 }
 
 #[cfg(test)]
@@ -173,14 +176,12 @@ mod tests {
             IncomingMessage::Subscribe { device } => {
                 assert_eq!(device.as_deref(), Some("dev"));
             }
-            _ => panic!("expected subscribe variant"),
         }
     }
 
     #[test]
-    fn incoming_location_update_accepts_snake_type_and_camel_fields() {
+    fn location_update_request_deserializes() {
         let json = r#"{
-            "type":"location_update",
             "device":"dev",
             "state":"moving",
             "lineId":7,
@@ -189,18 +190,9 @@ mod tests {
             "timestamp":123
         }"#;
 
-        let v: IncomingMessage = serde_json::from_str(json).unwrap();
-        match v {
-            IncomingMessage::LocationUpdate {
-                line_id,
-                station_id,
-                ..
-            } => {
-                assert_eq!(line_id, 7);
-                assert_eq!(station_id, Some(42));
-            }
-            _ => panic!("expected location update"),
-        }
+        let req: LocationUpdateRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.line_id, 7);
+        assert_eq!(req.station_id, Some(42));
     }
 
     #[test]

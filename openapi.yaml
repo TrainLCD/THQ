@@ -1,0 +1,376 @@
+openapi: 3.0.3
+info:
+  title: THQ Server REST API
+  description: Telemetry REST API for location updates and logging
+  version: 0.1.0
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/location:
+    post:
+      summary: Submit location update
+      description: |
+        Submit a location update for a device. The location will be:
+        - Validated for coordinate bounds and accuracy
+        - Annotated with segment information (if topology is configured)
+        - Broadcast to WebSocket subscribers
+        - Persisted to the database (if configured)
+      operationId: postLocation
+      tags:
+        - Location
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationUpdateRequest'
+            examples:
+              moving:
+                summary: Device is moving
+                value:
+                  device: "device-001"
+                  state: "moving"
+                  lineId: 11302
+                  coords:
+                    latitude: 35.6812
+                    longitude: 139.7671
+                    accuracy: 10.0
+                    speed: 45.0
+                  timestamp: 1706000000000
+              arrived:
+                summary: Device arrived at station
+                value:
+                  device: "device-001"
+                  state: "arrived"
+                  stationId: 1130201
+                  lineId: 11302
+                  coords:
+                    latitude: 35.6812
+                    longitude: 139.7671
+                    accuracy: 5.0
+                    speed: 0.0
+                  timestamp: 1706000000000
+      responses:
+        '200':
+          description: Location update accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              examples:
+                success:
+                  value:
+                    ok: true
+                    id: "550e8400-e29b-41d4-a716-446655440000"
+                successWithWarning:
+                  value:
+                    ok: true
+                    id: "550e8400-e29b-41d4-a716-446655440000"
+                    warning: "reported accuracy 150.0m exceeds threshold 100m"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              examples:
+                invalidCoords:
+                  value:
+                    ok: false
+                    error: "latitude 91.000000 or longitude 139.767100 is out of range"
+                negativeAccuracy:
+                  value:
+                    ok: false
+                    error: "accuracy must be >= 0"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              examples:
+                missingAuth:
+                  value:
+                    ok: false
+                    error: "missing or invalid Authorization header"
+                invalidToken:
+                  value:
+                    ok: false
+                    error: "invalid auth token"
+
+  /api/log:
+    post:
+      summary: Submit log entry
+      description: |
+        Submit a log entry for a device. The log will be:
+        - Validated (message must not be empty)
+        - Broadcast to WebSocket subscribers
+        - Persisted to the database (if configured)
+      operationId: postLog
+      tags:
+        - Logging
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogRequest'
+            examples:
+              appLog:
+                summary: Application log
+                value:
+                  device: "device-001"
+                  timestamp: 1706000000000
+                  log:
+                    type: "app"
+                    level: "info"
+                    message: "GPS signal acquired"
+              errorLog:
+                summary: Error log
+                value:
+                  device: "device-001"
+                  timestamp: 1706000000000
+                  log:
+                    type: "client"
+                    level: "error"
+                    message: "Connection lost"
+      responses:
+        '200':
+          description: Log entry accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                ok: true
+                id: "550e8400-e29b-41d4-a716-446655440000"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                ok: false
+                error: "log.message must not be empty"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              examples:
+                missingAuth:
+                  value:
+                    ok: false
+                    error: "missing or invalid Authorization header"
+                invalidToken:
+                  value:
+                    ok: false
+                    error: "invalid auth token"
+
+  /healthz:
+    get:
+      summary: Health check
+      description: Returns 200 OK if the server is running
+      operationId: healthz
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Server is healthy
+
+components:
+  schemas:
+    LocationUpdateRequest:
+      type: object
+      required:
+        - device
+        - state
+        - lineId
+        - coords
+        - timestamp
+      properties:
+        id:
+          type: string
+          description: Optional custom ID. If not provided, a UUID will be generated.
+          example: "custom-id-123"
+        device:
+          type: string
+          description: Device identifier
+          example: "device-001"
+        state:
+          $ref: '#/components/schemas/MovementState'
+        stationId:
+          type: integer
+          format: int32
+          nullable: true
+          description: |
+            Station ID. Only meaningful when state is "arrived" or "passing".
+            Ignored when state is "moving" or "approaching".
+          example: 1130201
+        lineId:
+          type: integer
+          format: int32
+          description: Line ID
+          example: 11302
+        coords:
+          $ref: '#/components/schemas/Coords'
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1706000000000
+
+    LogRequest:
+      type: object
+      required:
+        - device
+        - timestamp
+        - log
+      properties:
+        id:
+          type: string
+          description: Optional custom ID. If not provided, a UUID will be generated.
+          example: "custom-id-123"
+        device:
+          type: string
+          description: Device identifier
+          example: "device-001"
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1706000000000
+        log:
+          $ref: '#/components/schemas/LogBody'
+
+    Coords:
+      type: object
+      required:
+        - latitude
+        - longitude
+      properties:
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          description: Latitude in degrees
+          example: 35.6812
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          description: Longitude in degrees
+          example: 139.7671
+        accuracy:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0
+          description: Horizontal accuracy in meters
+          example: 10.0
+        speed:
+          type: number
+          format: double
+          nullable: true
+          description: Speed in km/h. Defaults to 0 if not provided.
+          example: 45.0
+
+    LogBody:
+      type: object
+      required:
+        - type
+        - level
+        - message
+      properties:
+        type:
+          $ref: '#/components/schemas/LogType'
+        level:
+          $ref: '#/components/schemas/LogLevel'
+        message:
+          type: string
+          minLength: 1
+          description: Log message (must not be empty or whitespace-only)
+          example: "GPS signal acquired"
+
+    MovementState:
+      type: string
+      enum:
+        - arrived
+        - approaching
+        - passing
+        - moving
+      description: |
+        Current movement state of the device:
+        - `arrived`: Stopped at a station
+        - `approaching`: Approaching a station
+        - `passing`: Passing through a station without stopping
+        - `moving`: In motion between stations
+
+    LogType:
+      type: string
+      enum:
+        - system
+        - app
+        - client
+      description: |
+        Type of log entry:
+        - `system`: System-generated logs
+        - `app`: Application logs
+        - `client`: Client-side logs
+
+    LogLevel:
+      type: string
+      enum:
+        - debug
+        - info
+        - warn
+        - error
+      description: Log severity level
+
+    ApiResponse:
+      type: object
+      required:
+        - ok
+      properties:
+        ok:
+          type: boolean
+          description: Whether the request was successful
+        id:
+          type: string
+          description: ID of the created resource (only present on success)
+        warning:
+          type: string
+          description: Warning message (e.g., low accuracy)
+        error:
+          type: string
+          description: Error message (only present on failure)
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Bearer token authentication. Use the same token configured via `THQ_WS_AUTH_TOKEN`.
+
+        Example: `Authorization: Bearer your-secret-token`
+
+tags:
+  - name: Location
+    description: Location update endpoints
+  - name: Logging
+    description: Log submission endpoints
+  - name: Health
+    description: Health check endpoints
