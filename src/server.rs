@@ -207,7 +207,13 @@ impl FromRequestParts<AppState> for Authenticated {
             .and_then(|v| v.to_str().ok());
 
         let token = auth_header
-            .and_then(|h| h.strip_prefix("Bearer "))
+            .and_then(|h| {
+                if h.len() >= 7 && h[..7].eq_ignore_ascii_case("bearer ") {
+                    Some(&h[7..])
+                } else {
+                    None
+                }
+            })
             .ok_or_else(|| {
                 (
                     StatusCode::UNAUTHORIZED,
