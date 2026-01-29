@@ -1,5 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
+use subtle::ConstantTimeEq;
+
 use anyhow::Context;
 use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
@@ -226,7 +228,7 @@ impl FromRequestParts<AppState> for Authenticated {
                 )
             })?;
 
-        if token == expected {
+        if token.as_bytes().ct_eq(expected.as_bytes()).into() {
             Ok(Authenticated)
         } else {
             Err((
@@ -276,14 +278,14 @@ async fn post_location(
     }
 
     let speed = req.coords.speed.unwrap_or(0.0);
-    if !speed.is_finite() {
+    if !speed.is_finite() || speed < 0.0 {
         return (
             StatusCode::BAD_REQUEST,
             Json(ApiResponse {
                 ok: false,
                 id: None,
                 warning: None,
-                error: Some("speed must be finite".to_string()),
+                error: Some("speed must be finite and non-negative".to_string()),
             }),
         );
     }
@@ -546,7 +548,7 @@ fn enforce_ws_auth(header: Option<&str>, auth: &AuthConfig) -> Result<(), AuthEr
     let token = parsed.token.ok_or(AuthError::MissingToken)?;
     let expected = auth.token.as_ref().ok_or(AuthError::TokenNotConfigured)?;
 
-    if token == *expected {
+    if token.as_bytes().ct_eq(expected.as_bytes()).into() {
         Ok(())
     } else {
         Err(AuthError::TokenMismatch)
