@@ -279,18 +279,21 @@ async fn post_location(
         );
     }
 
-    let speed = req.coords.speed.unwrap_or(0.0);
-    if !speed.is_finite() || speed < 0.0 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse {
-                ok: false,
-                id: None,
-                warning: None,
-                error: Some("speed must be finite and non-negative".to_string()),
-            }),
-        );
-    }
+    let speed = match req.coords.speed {
+        Some(s) if !s.is_finite() => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse {
+                    ok: false,
+                    id: None,
+                    warning: None,
+                    error: Some("speed must be finite".to_string()),
+                }),
+            );
+        }
+        Some(s) if s < 0.0 => None,
+        other => other,
+    };
 
     if let Some(acc) = req.coords.accuracy {
         if !acc.is_finite() {
