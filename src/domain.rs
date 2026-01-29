@@ -135,7 +135,7 @@ pub struct OutgoingCoords {
     pub latitude: f64,
     pub longitude: f64,
     pub accuracy: Option<f64>,
-    pub speed: f64,
+    pub speed: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -207,7 +207,7 @@ mod tests {
                 latitude: 1.0,
                 longitude: 2.0,
                 accuracy: None,
-                speed: 3.0,
+                speed: Some(3.0),
             },
             timestamp: 42,
             segment_id: None,
@@ -218,6 +218,6 @@ mod tests {
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "location_update");
         assert_eq!(json["device"], "dev");
-        assert_eq!(json["coords"]["speed"], 3.0);
+        assert_eq!(json["coords"]["speed"], 3.0); // Some(3.0) serializes as 3.0
     }
 }

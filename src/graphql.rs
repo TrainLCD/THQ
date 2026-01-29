@@ -53,8 +53,8 @@ pub struct LineAccuracyBucket {
     pub avg_accuracy: f64,
     pub p90_accuracy: f64,
     pub sample_count: i32,
-    pub avg_speed: f64,
-    pub max_speed: f64,
+    pub avg_speed: Option<f64>,
+    pub max_speed: Option<f64>,
 }
 
 #[derive(SimpleObject, Clone)]

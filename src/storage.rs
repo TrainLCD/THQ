@@ -13,8 +13,8 @@ pub struct LineAccuracyBucketRow {
     pub avg_accuracy: f64,
     pub p90_accuracy: f64,
     pub sample_count: i32,
-    pub avg_speed: f64,
-    pub max_speed: f64,
+    pub avg_speed: Option<f64>,
+    pub max_speed: Option<f64>,
 }
 
 #[derive(Clone, Default)]
@@ -67,7 +67,7 @@ impl Storage {
                 latitude DOUBLE PRECISION NOT NULL,
                 longitude DOUBLE PRECISION NOT NULL,
                 accuracy DOUBLE PRECISION,
-                speed DOUBLE PRECISION NOT NULL,
+                speed DOUBLE PRECISION,
                 timestamp BIGINT NOT NULL,
                 recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
@@ -92,6 +92,10 @@ impl Storage {
         .execute(pool)
         .await?;
         sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS to_station_id INTEGER;")
+            .execute(pool)
+            .await?;
+        // Allow NULL in speed column (previously NOT NULL); idempotent on columns already nullable.
+        sqlx::query("ALTER TABLE location_logs ALTER COLUMN speed DROP NOT NULL;")
             .execute(pool)
             .await?;
 
