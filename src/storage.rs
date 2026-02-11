@@ -141,6 +141,21 @@ impl Storage {
             .execute(pool)
             .await?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS observed_station_lines (
+                station_id INTEGER NOT NULL,
+                line_id INTEGER NOT NULL,
+                first_observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                observation_count BIGINT NOT NULL DEFAULT 1,
+                PRIMARY KEY (station_id, line_id)
+            );
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
         Ok(())
     }
 
@@ -172,6 +187,33 @@ impl Storage {
         .execute(pool)
         .await
         .context("failed to insert location log")?;
+
+        Ok(())
+    }
+
+    pub async fn store_station_line_visit(
+        &self,
+        station_id: i32,
+        line_id: i32,
+    ) -> anyhow::Result<()> {
+        let Some(pool) = &self.pool else {
+            return Ok(());
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO observed_station_lines (station_id, line_id)
+            VALUES ($1, $2)
+            ON CONFLICT (station_id, line_id) DO UPDATE
+                SET last_observed_at = NOW(),
+                    observation_count = observed_station_lines.observation_count + 1
+            "#,
+        )
+        .bind(station_id)
+        .bind(line_id)
+        .execute(pool)
+        .await
+        .context("failed to upsert observed station-line visit")?;
 
         Ok(())
     }

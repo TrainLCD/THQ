@@ -385,6 +385,13 @@ async fn post_location(
         tracing::error!(?err, "failed to persist location_update");
     }
 
+    // Collect station-line pair
+    if let Some(sid) = loc.station_id {
+        if let Err(err) = state.storage.store_station_line_visit(sid, loc.line_id).await {
+            tracing::error!(?err, "failed to persist station-line visit");
+        }
+    }
+
     // Check accuracy warning
     let warning = req
         .coords
