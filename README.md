@@ -132,7 +132,7 @@ Once connected, the server broadcasts `location_update` and `log` messages in re
 
 Send the token via WebSocket subprotocols:
 
-```
+```text
 Sec-WebSocket-Protocol: thq, thq-auth-<token>
 ```
 
@@ -246,7 +246,7 @@ Without a `database_url` the server still accepts WebSocket traffic but does not
 
 ## Project structure
 
-```
+```text
 src/
 ├── main.rs       # Entrypoint
 ├── config.rs     # CLI arguments & config file parsing
