@@ -1,26 +1,63 @@
 # thq-server
 
-Rust-only telemetry WebSocket server for THQ/TrainLCD.
+A telemetry server for [TrainLCD](https://github.com/TrainLCD). It provides real-time event streaming via WebSocket, a REST API for data ingestion, and a GraphQL API for aggregated reporting — all backed by optional PostgreSQL persistence.
 
-- WebSocket endpoint: `ws://<host>:<port>/ws`
-- Health check: `GET /healthz`
-- Broadcasts `location_update` and `log` messages to all subscribers
-- Maintains a ring buffer of the latest N events (default 1000)
-- Optional WebSocket auth using `Sec-WebSocket-Protocol: thq, thq-auth-<token>`
+## Features
 
-## Usage
+- **WebSocket** — Real-time broadcast of location updates and log events
+- **REST API** — Location ingestion (`POST /api/location`) and log submission (`POST /api/log`)
+- **GraphQL** — Aggregated per-line accuracy reports (`POST /graphql`)
+- **PostgreSQL persistence** — Optionally stores all events in the database
+- **Ring buffer** — Keeps the latest N events in memory (default 1000)
+- **Authentication** — WebSocket subprotocol-based auth; REST Bearer token auth
+- **Line topology** — Automatic segment annotation from a CSV topology file
+
+## Requirements
+
+- **Rust 1.91+** (pinned via `rust-toolchain.toml`)
+- **PostgreSQL 18** (if persistence is enabled)
+- **Docker / Docker Compose** (for containerized deployment)
+
+## Quick start
+
+### Local
 
 ```bash
+# Basic startup
 cargo run -- --host 0.0.0.0 --port 8080
-# or with config file
+
+# With a config file
 cargo run -- --config config.toml
-# DATABASE_URL can also be supplied via env or config file
+
+# With PostgreSQL persistence
 cargo run -- --database-url postgres://user:pass@localhost:5432/thq
-# WebSocket auth token can be supplied via env/cli/config
+
+# With WebSocket auth
 THQ_WS_AUTH_TOKEN=secret cargo run -- --host 0.0.0.0 --port 8080
 ```
 
-Example `config.toml`:
+### Docker Compose
+
+```bash
+# Set the auth token in .env
+echo 'THQ_WS_AUTH_TOKEN=your-secret' > .env
+
+# Build & start (includes PostgreSQL)
+docker compose up --build
+```
+
+Endpoints after startup:
+
+| Endpoint | URL |
+|---|---|
+| WebSocket | `ws://localhost:8080/ws` |
+| REST API | `http://localhost:8080/api/location`, `/api/log` |
+| GraphQL Playground | `http://localhost:8080/graphql` |
+| Health check | `http://localhost:8080/healthz` |
+
+## Configuration
+
+Values can be set via CLI arguments, environment variables, or a config file (`config.toml`).
 
 ```toml
 host = "0.0.0.0"
@@ -31,65 +68,88 @@ ws_auth_token = "change-me"
 ws_auth_required = true
 ```
 
-## WebSocket authentication
+| Key | Environment variable | Default | Description |
+|---|---|---|---|
+| `host` | — | `127.0.0.1` | Bind address |
+| `port` | — | `8080` | Listen port |
+| `ring_size` | — | `1000` | Ring buffer capacity |
+| `database_url` | `DATABASE_URL` | — | PostgreSQL connection URL |
+| `ws_auth_token` | `THQ_WS_AUTH_TOKEN` | — | Auth token |
+| `ws_auth_required` | `THQ_WS_AUTH_REQUIRED` | `true`* | Require authentication |
 
-- Client must propose both the app protocol and the auth token via subprotocols:
+\* Defaults to `true` when a token is configured.
 
-  ```http
-  Sec-WebSocket-Protocol: thq, thq-auth-<token>
-  ```
+## API
 
-- The server validates that `thq` is present and compares `<token>` against
-  `THQ_WS_AUTH_TOKEN`/`ws_auth_token`. On success it responds with
-  `Sec-WebSocket-Protocol: thq`.
-- When `ws_auth_required`/`THQ_WS_AUTH_REQUIRED` is `true` (default when a token
-  is provided), missing or invalid tokens result in HTTP 401 during handshake.
-- Set `ws_auth_required = false` (or `THQ_WS_AUTH_REQUIRED=false`) to skip auth in
-  local development, but prefer sending `thq` to keep clients aligned.
+### REST API
 
-## Docker Compose
+Authenticated endpoints require an `Authorization: Bearer <token>` header.
 
-Build and start the server with PostgreSQL locally:
+See [`openapi.yaml`](./openapi.yaml) for the full specification.
 
-```bash
-docker compose up --build
-```
+#### `POST /api/location` — Submit a location update
 
-- WebSocket: `ws://localhost:8080/ws`
-- Postgres: `postgres://thq:thq@localhost:5432/thq`
-- Docker uses Rust 1.91-slim builder and Postgres 18 image by default (runtime base
-  is debian:trixie with `postgresql-client` installed for startup wait).
-
-Environment variables can be overridden in `docker-compose.yml` as needed.
-
-Toolchain: pinned to Rust `1.91` via `rust-toolchain.toml`; Docker builder uses
-`rust:1.91-slim`. If you ever hit an `edition2024` error, rebuild after the image
-update or clear old builder cache:
-
-```bash
-docker compose build --no-cache
-```
-
-
-## Persistence
-
-When `database_url`/`DATABASE_URL` is provided, the server connects to PostgreSQL,
-creates the tables if missing, and stores each incoming message:
-
-- `location_logs`: `id`, `device`, `state`, `station_id`, `line_id`, `segment_id`, `from_station_id`, `to_station_id`, `latitude`, `longitude`, `accuracy`, `speed`, `timestamp`, `recorded_at`
-- `log_events`: `id`, `device`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at`
-
-Without a `database_url` the server still accepts WebSocket traffic but does not
-persist messages.
-
-## Message formats
-
-### subscribe
 ```json
-{"type": "subscribe", "device": "device-id"}
+{
+  "device": "device-001",
+  "state": "moving",
+  "lineId": 11302,
+  "coords": {
+    "latitude": 35.6812,
+    "longitude": 139.7671,
+    "accuracy": 10.0,
+    "speed": 45.0
+  },
+  "timestamp": 1706000000000
+}
 ```
 
-### location_update
+#### `POST /api/log` — Submit a log entry
+
+```json
+{
+  "device": "device-001",
+  "timestamp": 1706000000000,
+  "log": {
+    "type": "app",
+    "level": "info",
+    "message": "GPS signal acquired"
+  }
+}
+```
+
+#### `GET /healthz` — Health check
+
+No authentication required. Returns `200 OK` if the server is running.
+
+### WebSocket
+
+Endpoint: `ws://<host>:<port>/ws`
+
+Once connected, the server broadcasts `location_update` and `log` messages in real time.
+
+#### Authentication
+
+Send the token via WebSocket subprotocols:
+
+```
+Sec-WebSocket-Protocol: thq, thq-auth-<token>
+```
+
+On success the server responds with `Sec-WebSocket-Protocol: thq`. When `ws_auth_required` is `true`, a missing or invalid token results in HTTP 401.
+
+Set `ws_auth_required = false` to skip authentication during local development.
+
+#### Message formats
+
+**subscribe**
+
+```json
+{ "type": "subscribe", "device": "device-id" }
+```
+
+**location_update**
+
 ```json
 {
   "id": "uuid",
@@ -106,11 +166,10 @@ persist messages.
   },
   "timestamp": 1234567890
 }
-
-`station_id` is optional; omit it when not applicable. `line_id` is required.
 ```
 
-### log
+**log**
+
 ```json
 {
   "id": "uuid",
@@ -125,56 +184,23 @@ persist messages.
 }
 ```
 
-### error
+**error**
+
 ```json
 {
   "type": "error",
   "error": {
     "type": "websocket_message_error | json_parse_error | payload_parse_error | accuracy_low | invalid_coords | unknown",
-  "reason": "..."
+    "reason": "..."
   }
 }
 ```
 
-## GraphQL reports (line-level accuracy)
+### GraphQL
 
-- Endpoint: `POST /graphql` (GraphQL Playground available via `GET /graphql`).
-- Purpose: return **aggregated** accuracy metrics per `line_id`, never raw location rows.
-- Guardrails:
-  - `from`/`to` required; span limits per bucket: MINUTE ≤ 7d, HOUR ≤ 90d, DAY ≤ 365d.
-  - `limit` defaults to 500 and is capped at 2000 buckets.
-  - `lineId` must be a single numeric ID; batching multiple lines is not yet supported.
+Endpoint: `POST /graphql` (Playground: `GET /graphql`)
 
-Schema (initial scope):
-
-```graphql
-enum TimeBucketSize { MINUTE HOUR DAY }
-
-type LineAccuracyBucket {
-  bucketStart: DateTime!
-  bucketEnd: DateTime!
-  avgAccuracy: Float!
-  p90Accuracy: Float!
-  sampleCount: Int!
-}
-
-type LineAccuracyReport {
-  lineId: ID!
-  buckets: [LineAccuracyBucket!]!
-}
-
-type Query {
-  accuracyByLine(
-    lineId: ID!
-    from: DateTime!
-    to: DateTime!
-    bucketSize: TimeBucketSize!
-    limit: Int = 500
-  ): LineAccuracyReport!
-}
-```
-
-Example query:
+Returns aggregated accuracy metrics per line. Raw location data is never exposed.
 
 ```graphql
 query {
@@ -197,6 +223,43 @@ query {
 }
 ```
 
-Notes:
-- Only aggregated accuracy is exposed; raw lat/lng samples are not returned via GraphQL.
-- Queries exceeding the span/bucket/limit guards fail fast with an error.
+| Parameter | Type | Description |
+|---|---|---|
+| `lineId` | `ID!` | Line ID |
+| `from` | `DateTime!` | Start of the time range |
+| `to` | `DateTime!` | End of the time range |
+| `bucketSize` | `TimeBucketSize!` | `MINUTE`, `HOUR`, or `DAY` |
+| `limit` | `Int` | Max buckets returned (default 500, cap 2000) |
+
+Maximum time span per bucket size: MINUTE ≤ 7 days, HOUR ≤ 90 days, DAY ≤ 365 days.
+
+## Persistence
+
+When `database_url` / `DATABASE_URL` is provided, the server connects to PostgreSQL, auto-creates tables, and stores every event.
+
+| Table | Key columns |
+|---|---|
+| `location_logs` | `id`, `device`, `state`, `station_id`, `line_id`, `segment_id`, `from_station_id`, `to_station_id`, `latitude`, `longitude`, `accuracy`, `speed`, `battery_level`, `battery_state`, `timestamp`, `recorded_at` |
+| `log_events` | `id`, `device`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at` |
+
+Without a `database_url` the server still accepts WebSocket traffic but does not persist messages.
+
+## Project structure
+
+```
+src/
+├── main.rs       # Entrypoint
+├── config.rs     # CLI arguments & config file parsing
+├── server.rs     # Axum HTTP / WebSocket server
+├── state.rs      # Shared application state
+├── domain.rs     # Domain model definitions
+├── storage.rs    # PostgreSQL persistence layer
+├── graphql.rs    # GraphQL schema & resolvers
+├── segment.rs    # Line topology & segment inference
+└── static/
+    └── join.csv  # Line topology data
+```
+
+## License
+
+[MIT License](./LICENSE)
