@@ -10,7 +10,7 @@
       "title": "Location Logs Over Time",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -25,7 +25,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT\n  date_trunc('hour', recorded_at) AS time,\n  device,\n  COUNT(*) AS count\nFROM location_logs\nWHERE recorded_at >= $__timeFrom() AND recorded_at <= $__timeTo()\nGROUP BY time, device\nORDER BY time",
           "format": "time_series",
           "refId": "A"
@@ -37,7 +37,7 @@
       "title": "Log Events Over Time",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -52,7 +52,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT\n  date_trunc('hour', recorded_at) AS time,\n  log_level,\n  COUNT(*) AS count\nFROM log_events\nWHERE recorded_at >= $__timeFrom() AND recorded_at <= $__timeTo()\nGROUP BY time, log_level\nORDER BY time",
           "format": "time_series",
           "refId": "A"
@@ -64,7 +64,7 @@
       "title": "Total Location Logs",
       "type": "stat",
       "gridPos": { "h": 4, "w": 4, "x": 0, "y": 8 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
           "thresholds": {
@@ -77,7 +77,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT COUNT(*) AS \"Total\" FROM location_logs",
           "format": "table",
           "refId": "A"
@@ -89,7 +89,7 @@
       "title": "Total Log Events",
       "type": "stat",
       "gridPos": { "h": 4, "w": 4, "x": 4, "y": 8 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
           "thresholds": {
@@ -102,7 +102,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT COUNT(*) AS \"Total\" FROM log_events",
           "format": "table",
           "refId": "A"
@@ -114,7 +114,7 @@
       "title": "Active Devices (24h)",
       "type": "stat",
       "gridPos": { "h": 4, "w": 4, "x": 8, "y": 8 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
           "thresholds": {
@@ -127,7 +127,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT COUNT(DISTINCT device) AS \"Devices\" FROM location_logs WHERE recorded_at >= NOW() - INTERVAL '24 hours'",
           "format": "table",
           "refId": "A"
@@ -139,7 +139,7 @@
       "title": "Average Accuracy by Device",
       "type": "bargauge",
       "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
           "unit": "m",
@@ -159,7 +159,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT\n  device,\n  ROUND(AVG(accuracy)::numeric, 1) AS \"Avg Accuracy (m)\"\nFROM location_logs\nWHERE accuracy IS NOT NULL\n  AND recorded_at >= $__timeFrom() AND recorded_at <= $__timeTo()\nGROUP BY device\nORDER BY \"Avg Accuracy (m)\" DESC\nLIMIT 20",
           "format": "table",
           "refId": "A"
@@ -171,7 +171,7 @@
       "title": "Accuracy Over Time",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
           "unit": "m",
@@ -187,7 +187,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT\n  date_trunc('hour', recorded_at) AS time,\n  device,\n  ROUND(AVG(accuracy)::numeric, 1) AS accuracy\nFROM location_logs\nWHERE accuracy IS NOT NULL\n  AND recorded_at >= $__timeFrom() AND recorded_at <= $__timeTo()\nGROUP BY time, device\nORDER BY time",
           "format": "time_series",
           "refId": "A"
@@ -199,7 +199,7 @@
       "title": "Battery Level Over Time",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
@@ -217,7 +217,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT\n  date_trunc('hour', recorded_at) AS time,\n  device,\n  ROUND((AVG(battery_level) * 100)::numeric, 1) AS battery\nFROM location_logs\nWHERE battery_level IS NOT NULL\n  AND recorded_at >= $__timeFrom() AND recorded_at <= $__timeTo()\nGROUP BY time, device\nORDER BY time",
           "format": "time_series",
           "refId": "A"
@@ -229,7 +229,7 @@
       "title": "Speed Over Time",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
           "unit": "velocityms",
@@ -245,7 +245,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT\n  date_trunc('hour', recorded_at) AS time,\n  device,\n  ROUND(AVG(speed)::numeric, 2) AS speed\nFROM location_logs\nWHERE speed IS NOT NULL\n  AND recorded_at >= $__timeFrom() AND recorded_at <= $__timeTo()\nGROUP BY time, device\nORDER BY time",
           "format": "time_series",
           "refId": "A"
@@ -257,10 +257,10 @@
       "title": "Log Events by Level",
       "type": "piechart",
       "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT\n  log_level,\n  COUNT(*) AS count\nFROM log_events\nWHERE recorded_at >= $__timeFrom() AND recorded_at <= $__timeTo()\nGROUP BY log_level\nORDER BY count DESC",
           "format": "table",
           "refId": "A"
@@ -272,10 +272,10 @@
       "title": "Recent Location Logs",
       "type": "table",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 28 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT\n  recorded_at AS time,\n  device,\n  state,\n  station_id,\n  line_id,\n  segment_id,\n  ROUND(latitude::numeric, 5) AS lat,\n  ROUND(longitude::numeric, 5) AS lon,\n  ROUND(accuracy::numeric, 1) AS accuracy,\n  ROUND(speed::numeric, 1) AS speed,\n  ROUND((battery_level * 100)::numeric, 0) AS \"battery%\"\nFROM location_logs\nWHERE recorded_at >= $__timeFrom() AND recorded_at <= $__timeTo()\nORDER BY recorded_at DESC\nLIMIT 100",
           "format": "table",
           "refId": "A"
@@ -287,10 +287,10 @@
       "title": "Recent Log Events",
       "type": "table",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 36 },
-      "datasource": { "type": "postgres", "uid": "" },
+      "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": { "type": "postgres", "uid": "thq-postgres" },
           "rawSql": "SELECT\n  recorded_at AS time,\n  device,\n  log_type,\n  log_level,\n  message\nFROM log_events\nWHERE recorded_at >= $__timeFrom() AND recorded_at <= $__timeTo()\nORDER BY recorded_at DESC\nLIMIT 100",
           "format": "table",
           "refId": "A"
