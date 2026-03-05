@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: THQ PostgreSQL
+    type: postgres
+    url: db:5432
+    database: thq
+    user: thq
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1800
+    secureJsonData:
+      password: thq
+    isDefault: true
+    editable: true
