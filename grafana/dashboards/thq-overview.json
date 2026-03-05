@@ -258,6 +258,17 @@
       "type": "piechart",
       "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
       "datasource": { "type": "postgres", "uid": "thq-postgres" },
+      "transformations": [
+        {
+          "id": "rowsToFields",
+          "options": {
+            "mappings": [
+              { "fieldName": "log_level", "handlerKey": "field.name" },
+              { "fieldName": "count", "handlerKey": "field.value" }
+            ]
+          }
+        }
+      ],
       "targets": [
         {
           "datasource": { "type": "postgres", "uid": "thq-postgres" },
