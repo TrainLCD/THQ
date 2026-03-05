@@ -141,6 +141,14 @@ impl Storage {
             .execute(pool)
             .await?;
 
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_location_logs_recorded_at ON location_logs (recorded_at, device);")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_log_events_recorded_at ON log_events (recorded_at, log_level);")
+            .execute(pool)
+            .await?;
+
         Ok(())
     }
 
