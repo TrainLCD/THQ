@@ -142,7 +142,7 @@
       "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
-          "unit": "m",
+          "unit": "lengthmeter",
           "thresholds": {
             "steps": [
               { "color": "green", "value": null },
@@ -174,7 +174,7 @@
       "datasource": { "type": "postgres", "uid": "thq-postgres" },
       "fieldConfig": {
         "defaults": {
-          "unit": "m",
+          "unit": "lengthmeter",
           "color": { "mode": "palette-classic" },
           "custom": {
             "lineWidth": 1,
