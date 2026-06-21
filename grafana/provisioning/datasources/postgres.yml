@@ -8,7 +8,7 @@ datasources:
     database: thq
     user: thq
     secureJsonData:
-      password: thq
+      password: $POSTGRES_PASSWORD
     jsonData:
       sslmode: disable
       postgresVersion: 1800
