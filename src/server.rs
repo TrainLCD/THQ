@@ -8,55 +8,49 @@ use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        ConnectInfo, FromRequestParts, State,
+        ConnectInfo, State,
     },
-    http::{
-        header::AUTHORIZATION, header::SEC_WEBSOCKET_PROTOCOL, request::Parts, HeaderMap,
-        StatusCode,
-    },
-    response::{Html, IntoResponse, Json},
-    routing::{get, post},
+    http::{header::AUTHORIZATION, header::SEC_WEBSOCKET_PROTOCOL, HeaderMap, StatusCode},
+    response::{Html, IntoResponse},
+    routing::get,
     Router,
 };
 use futures::{SinkExt, StreamExt};
-use serde::Serialize;
 use tokio::sync::mpsc;
 use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
     config::Config,
-    domain::{
-        ErrorBody, ErrorType, IncomingMessage, LocationUpdateRequest, LogRequest, MovementState,
-        OutgoingCoords, OutgoingError, OutgoingLocation, OutgoingLog, OutgoingMessage,
-    },
-    graphql::{build_schema, AppSchema},
+    domain::{ErrorBody, ErrorType, IncomingMessage, OutgoingError, OutgoingMessage},
+    graphql::{build_schema, AppSchema, MutationAuth},
     segment::{LineTopology, SegmentEstimator},
     state::TelemetryHub,
     storage::Storage,
 };
 
-const BAD_ACCURACY_THRESHOLD: f64 = 100.0; // meters
-
+/// Per-scope shared secrets. Each token grants exactly one role:
+/// - observer: WebSocket subscription only
+/// - events: sendLogEvent mutation only
+/// - telemetry: sendLogEvent and sendLocation mutations
 #[derive(Clone)]
 struct AuthConfig {
-    token: Option<String>,
+    observer_token: Option<String>,
+    events_token: Option<String>,
+    telemetry_token: Option<String>,
     required: bool,
 }
 
 #[derive(Clone)]
 struct AppState {
     hub: Arc<TelemetryHub>,
-    storage: Storage,
     auth: AuthConfig,
     schema: AppSchema,
-    segmenter: SegmentEstimator,
 }
 
 pub async fn run_server(config: Config) -> anyhow::Result<()> {
     let hub = Arc::new(TelemetryHub::new(config.ring_size));
     let storage = Storage::connect(config.database_url.clone()).await?;
-    let schema = build_schema(storage.clone());
 
     let topology = match LineTopology::from_env_var("THQ_LINE_TOPOLOGY_PATH")? {
         Some(topo) => {
@@ -88,28 +82,29 @@ pub async fn run_server(config: Config) -> anyhow::Result<()> {
         tracing::info!("database_url not set; persistence is disabled");
     }
 
-    if !config.ws_auth_required && config.ws_auth_token.is_none() {
-        warn!("websocket auth is disabled because THQ_WS_AUTH_TOKEN is not set");
+    if !config.auth_required {
+        warn!(
+            "authentication is disabled; every client gets observer, events and telemetry access"
+        );
     }
 
+    let schema = build_schema(storage, hub.clone(), segmenter);
+
     let state = AppState {
-        hub: hub.clone(),
-        storage: storage.clone(),
+        hub,
         auth: AuthConfig {
-            token: config.ws_auth_token.clone(),
-            required: config.ws_auth_required,
+            observer_token: config.observer_auth_token.clone(),
+            events_token: config.events_auth_token.clone(),
+            telemetry_token: config.telemetry_auth_token.clone(),
+            required: config.auth_required,
         },
-        schema: schema.clone(),
-        segmenter: segmenter.clone(),
+        schema,
     };
 
     let app = Router::new()
         .route("/", get(ws_handler))
         .route("/ws", get(ws_handler))
         .route("/healthz", get(healthz))
-        .route("/api/location", post(post_location))
-        .route("/api/log", post(post_log))
-        .with_state(state.clone())
         .route("/graphql", get(graphql_playground).post(graphql_handler))
         .with_state(state);
 
@@ -158,8 +153,15 @@ async fn ws_handler(
 async fn healthz() -> impl IntoResponse {
     StatusCode::OK
 }
-async fn graphql_handler(State(state): State<AppState>, req: GraphQLRequest) -> GraphQLResponse {
-    state.schema.execute(req.into_inner()).await.into()
+
+async fn graphql_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    req: GraphQLRequest,
+) -> GraphQLResponse {
+    let auth = mutation_auth(&headers, &state.auth);
+    let req = req.into_inner().data(auth);
+    state.schema.execute(req).await.into()
 }
 
 async fn graphql_playground() -> impl IntoResponse {
@@ -168,292 +170,49 @@ async fn graphql_playground() -> impl IntoResponse {
     ))
 }
 
-#[derive(Serialize)]
-struct ApiResponse {
-    ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    warning: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
+/// Resolves the mutation scopes granted by the Authorization header.
+/// Queries stay open, so the result is carried into the GraphQL context
+/// instead of rejecting the request here.
+fn mutation_auth(headers: &HeaderMap, auth: &AuthConfig) -> MutationAuth {
+    if !auth.required {
+        return MutationAuth {
+            can_send_events: true,
+            can_send_location: true,
+        };
+    }
+
+    let Some(token) = bearer_token(headers) else {
+        return MutationAuth {
+            can_send_events: false,
+            can_send_location: false,
+        };
+    };
+
+    let matches = |expected: &Option<String>| -> bool {
+        expected
+            .as_ref()
+            .map(|e| token.as_bytes().ct_eq(e.as_bytes()).into())
+            .unwrap_or(false)
+    };
+
+    let can_send_location = matches(&auth.telemetry_token);
+    let can_send_events = can_send_location || matches(&auth.events_token);
+
+    MutationAuth {
+        can_send_events,
+        can_send_location,
+    }
 }
 
-/// Extractor that enforces Bearer token authentication for REST API
-struct Authenticated;
-
-#[axum::async_trait]
-impl FromRequestParts<AppState> for Authenticated {
-    type Rejection = (StatusCode, Json<ApiResponse>);
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
-        if !state.auth.required {
-            return Ok(Authenticated);
-        }
-
-        let expected = state.auth.token.as_ref().ok_or_else(|| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse {
-                    ok: false,
-                    id: None,
-                    warning: None,
-                    error: Some("server token is not configured".to_string()),
-                }),
-            )
-        })?;
-
-        let auth_header = parts
-            .headers
-            .get(AUTHORIZATION)
-            .and_then(|v| v.to_str().ok());
-
-        let token = auth_header
-            .and_then(|h| {
-                h.get(..7).and_then(|pref| {
-                    if pref.eq_ignore_ascii_case("bearer ") {
-                        h.get(7..)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .ok_or_else(|| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(ApiResponse {
-                        ok: false,
-                        id: None,
-                        warning: None,
-                        error: Some("missing or invalid Authorization header".to_string()),
-                    }),
-                )
-            })?;
-
-        if token.as_bytes().ct_eq(expected.as_bytes()).into() {
-            Ok(Authenticated)
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let header = headers.get(AUTHORIZATION)?.to_str().ok()?;
+    header.get(..7).and_then(|pref| {
+        if pref.eq_ignore_ascii_case("bearer ") {
+            header.get(7..)
         } else {
-            Err((
-                StatusCode::UNAUTHORIZED,
-                Json(ApiResponse {
-                    ok: false,
-                    id: None,
-                    warning: None,
-                    error: Some("invalid auth token".to_string()),
-                }),
-            ))
+            None
         }
-    }
-}
-
-async fn post_location(
-    _auth: Authenticated,
-    State(state): State<AppState>,
-    Json(req): Json<LocationUpdateRequest>,
-) -> impl IntoResponse {
-    // Validate coordinates
-    if !req.coords.latitude.is_finite() || !req.coords.longitude.is_finite() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse {
-                ok: false,
-                id: None,
-                warning: None,
-                error: Some("latitude/longitude must be finite numbers".to_string()),
-            }),
-        );
-    }
-
-    if req.coords.latitude.abs() > 90.0 || req.coords.longitude.abs() > 180.0 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse {
-                ok: false,
-                id: None,
-                warning: None,
-                error: Some(format!(
-                    "latitude {:.6} or longitude {:.6} is out of range",
-                    req.coords.latitude, req.coords.longitude
-                )),
-            }),
-        );
-    }
-
-    let speed = match req.coords.speed {
-        Some(s) if !s.is_finite() => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse {
-                    ok: false,
-                    id: None,
-                    warning: None,
-                    error: Some("speed must be finite".to_string()),
-                }),
-            );
-        }
-        Some(s) if s < 0.0 => None,
-        other => other,
-    };
-
-    if let Some(acc) = req.coords.accuracy {
-        if !acc.is_finite() {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse {
-                    ok: false,
-                    id: None,
-                    warning: None,
-                    error: Some("accuracy must be finite".to_string()),
-                }),
-            );
-        }
-        if acc < 0.0 {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse {
-                    ok: false,
-                    id: None,
-                    warning: None,
-                    error: Some("accuracy must be >= 0".to_string()),
-                }),
-            );
-        }
-    }
-
-    if let Some(level) = req.battery_level {
-        if !(0.0..=1.0).contains(&level) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse {
-                    ok: false,
-                    id: None,
-                    warning: None,
-                    error: Some("battery_level must be between 0.0 and 1.0".to_string()),
-                }),
-            );
-        }
-    }
-
-    // station_id is only meaningful when not moving/approaching
-    let station_id = if matches!(
-        req.state,
-        MovementState::Moving | MovementState::Approaching
-    ) {
-        None
-    } else {
-        req.station_id
-    };
-
-    let id = req.id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let loc = OutgoingLocation {
-        id: id.clone(),
-        device: req.device,
-        state: req.state,
-        station_id,
-        line_id: req.line_id,
-        coords: OutgoingCoords {
-            latitude: req.coords.latitude,
-            longitude: req.coords.longitude,
-            accuracy: req.coords.accuracy,
-            speed,
-        },
-        timestamp: req.timestamp,
-        segment_id: None,
-        from_station_id: None,
-        to_station_id: None,
-        battery_level: req.battery_level,
-        battery_state: req.battery_state,
-    };
-
-    // Annotate with segment info
-    let loc = state.segmenter.annotate(loc).await;
-
-    // Broadcast to WebSocket subscribers
-    let message = OutgoingMessage::LocationUpdate(loc.clone());
-    match serde_json::to_string(&message) {
-        Ok(serialized) => state.hub.broadcast(serialized).await,
-        Err(err) => {
-            tracing::error!(?err, "failed to serialize location_update message");
-        }
-    }
-
-    // Store in database
-    if let Err(err) = state.storage.store_location(&loc).await {
-        tracing::error!(?err, "failed to persist location_update");
-    }
-
-    // Check accuracy warning
-    let warning = req
-        .coords
-        .accuracy
-        .filter(|v| *v > BAD_ACCURACY_THRESHOLD)
-        .map(|acc| {
-            format!("reported accuracy {acc:.1}m exceeds threshold {BAD_ACCURACY_THRESHOLD:.0}m")
-        });
-
-    (
-        StatusCode::OK,
-        Json(ApiResponse {
-            ok: true,
-            id: Some(id),
-            warning,
-            error: None,
-        }),
-    )
-}
-
-async fn post_log(
-    _auth: Authenticated,
-    State(state): State<AppState>,
-    Json(req): Json<LogRequest>,
-) -> impl IntoResponse {
-    // Validate log message
-    if req.log.message.trim().is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse {
-                ok: false,
-                id: None,
-                warning: None,
-                error: Some("log.message must not be empty".to_string()),
-            }),
-        );
-    }
-
-    let id = req.id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let log = OutgoingLog {
-        id: id.clone(),
-        device: req.device,
-        timestamp: req.timestamp,
-        log: req.log,
-    };
-
-    // Broadcast to WebSocket subscribers
-    let message = OutgoingMessage::Log(log.clone());
-    match serde_json::to_string(&message) {
-        Ok(serialized) => state.hub.broadcast(serialized).await,
-        Err(err) => {
-            tracing::error!(?err, "failed to serialize log message");
-        }
-    }
-
-    // Store in database
-    if let Err(err) = state.storage.store_log(&log).await {
-        tracing::error!(?err, "failed to persist log message");
-    }
-
-    (
-        StatusCode::OK,
-        Json(ApiResponse {
-            ok: true,
-            id: Some(id),
-            warning: None,
-            error: None,
-        }),
-    )
+    })
 }
 
 async fn handle_socket(socket: WebSocket, peer: SocketAddr, state: AppState) {
@@ -558,6 +317,8 @@ impl AuthError {
     }
 }
 
+/// WebSocket observation is granted by the observer token only; the events
+/// and telemetry tokens deliberately do not open the subscription channel.
 fn enforce_ws_auth(header: Option<&str>, auth: &AuthConfig) -> Result<(), AuthError> {
     if !auth.required {
         return Ok(());
@@ -571,7 +332,10 @@ fn enforce_ws_auth(header: Option<&str>, auth: &AuthConfig) -> Result<(), AuthEr
     }
 
     let token = parsed.token.ok_or(AuthError::MissingToken)?;
-    let expected = auth.token.as_ref().ok_or(AuthError::TokenNotConfigured)?;
+    let expected = auth
+        .observer_token
+        .as_ref()
+        .ok_or(AuthError::TokenNotConfigured)?;
 
     if token.as_bytes().ct_eq(expected.as_bytes()).into() {
         Ok(())
@@ -675,31 +439,96 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::Body, extract::ws::Message, http::Request};
+    use axum::{body::Body, extract::ws::Message, http::Request, routing::post};
     use hyper::body::to_bytes;
     use serde_json::{json, Value};
     use tokio::sync::mpsc;
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    fn test_state() -> AppState {
-        AppState {
-            hub: Arc::new(TelemetryHub::new(10)),
-            storage: Storage::default(),
-            auth: AuthConfig {
-                token: None,
-                required: false,
-            },
-            schema: build_schema(Storage::default()),
-            segmenter: SegmentEstimator::new(LineTopology::empty()),
+    fn open_auth() -> AuthConfig {
+        AuthConfig {
+            observer_token: None,
+            events_token: None,
+            telemetry_token: None,
+            required: false,
         }
     }
 
-    fn test_router() -> Router {
+    fn scoped_auth() -> AuthConfig {
+        AuthConfig {
+            observer_token: Some("observer-secret".into()),
+            events_token: Some("events-secret".into()),
+            telemetry_token: Some("telemetry-secret".into()),
+            required: true,
+        }
+    }
+
+    fn state_with_auth(auth: AuthConfig) -> AppState {
+        let hub = Arc::new(TelemetryHub::new(10));
+        AppState {
+            hub: hub.clone(),
+            auth,
+            schema: build_schema(
+                Storage::default(),
+                hub,
+                SegmentEstimator::new(LineTopology::empty()),
+            ),
+        }
+    }
+
+    fn graphql_router(state: AppState) -> Router {
         Router::new()
-            .route("/api/location", post(post_location))
-            .route("/api/log", post(post_log))
-            .with_state(test_state())
+            .route("/graphql", post(graphql_handler))
+            .with_state(state)
+    }
+
+    fn graphql_request(query: &str, auth_header: Option<&str>) -> Request<Body> {
+        let payload = json!({ "query": query });
+
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/graphql")
+            .header("content-type", "application/json");
+        if let Some(value) = auth_header {
+            builder = builder.header("authorization", value);
+        }
+        builder.body(Body::from(payload.to_string())).unwrap()
+    }
+
+    fn send_log_event_request(auth_header: Option<&str>) -> Request<Body> {
+        graphql_request(
+            r#"mutation {
+                sendLogEvent(input: {
+                    device: "test-device",
+                    timestamp: 1706000000000,
+                    type: APP,
+                    level: INFO,
+                    message: "Hello, world!"
+                }) { id }
+            }"#,
+            auth_header,
+        )
+    }
+
+    fn send_location_request(auth_header: Option<&str>) -> Request<Body> {
+        graphql_request(
+            r#"mutation {
+                sendLocation(input: {
+                    device: "test-device",
+                    state: MOVING,
+                    lineId: 1,
+                    coords: { latitude: 35.6812, longitude: 139.7671 },
+                    timestamp: 1706000000000
+                }) { id }
+            }"#,
+            auth_header,
+        )
+    }
+
+    async fn body_json(response: axum::response::Response) -> Value {
+        let body = to_bytes(response.into_body()).await.unwrap();
+        serde_json::from_slice(&body).unwrap()
     }
 
     #[tokio::test]
@@ -737,486 +566,179 @@ mod tests {
 
     #[test]
     fn enforce_requires_token_when_enabled() {
-        let res = enforce_ws_auth(
-            Some("thq"),
-            &AuthConfig {
-                token: Some("secret".into()),
-                required: true,
-            },
-        );
-
+        let res = enforce_ws_auth(Some("thq"), &scoped_auth());
         assert_eq!(res.unwrap_err(), AuthError::MissingToken);
     }
 
     #[test]
-    fn enforce_accepts_correct_token() {
-        let res = enforce_ws_auth(
-            Some("thq, thq-auth-secret"),
-            &AuthConfig {
-                token: Some("secret".into()),
-                required: true,
-            },
-        );
-
+    fn enforce_accepts_observer_token() {
+        let res = enforce_ws_auth(Some("thq, thq-auth-observer-secret"), &scoped_auth());
         assert!(res.is_ok());
     }
 
     #[test]
     fn enforce_rejects_wrong_token() {
-        let res = enforce_ws_auth(
-            Some("thq, thq-auth-wrong"),
-            &AuthConfig {
-                token: Some("secret".into()),
-                required: true,
-            },
-        );
-
+        let res = enforce_ws_auth(Some("thq, thq-auth-wrong"), &scoped_auth());
         assert_eq!(res.unwrap_err(), AuthError::TokenMismatch);
     }
 
-    // REST API tests
-
-    #[tokio::test]
-    async fn post_location_success() {
-        let app = test_router();
-
-        let payload = json!({
-            "device": "test-device",
-            "state": "moving",
-            "lineId": 1,
-            "coords": {
-                "latitude": 35.6812,
-                "longitude": 139.7671,
-                "accuracy": 10.0,
-                "speed": 50.0
-            },
-            "timestamp": 1234567890
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/location")
-                    .header("content-type", "application/json")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = to_bytes(response.into_body()).await.unwrap();
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["ok"], true);
-        assert!(v["id"].is_string());
-    }
-
-    #[tokio::test]
-    async fn post_location_with_custom_id() {
-        let app = test_router();
-
-        let payload = json!({
-            "id": "custom-id-123",
-            "device": "test-device",
-            "state": "arrived",
-            "stationId": 42,
-            "lineId": 1,
-            "coords": {
-                "latitude": 35.6812,
-                "longitude": 139.7671
-            },
-            "timestamp": 1234567890
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/location")
-                    .header("content-type", "application/json")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = to_bytes(response.into_body()).await.unwrap();
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["id"], "custom-id-123");
-    }
-
-    #[tokio::test]
-    async fn post_location_warns_on_low_accuracy() {
-        let app = test_router();
-
-        let payload = json!({
-            "device": "test-device",
-            "state": "moving",
-            "lineId": 1,
-            "coords": {
-                "latitude": 35.6812,
-                "longitude": 139.7671,
-                "accuracy": 150.0,
-                "speed": 50.0
-            },
-            "timestamp": 1234567890
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/location")
-                    .header("content-type", "application/json")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = to_bytes(response.into_body()).await.unwrap();
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["ok"], true);
-        assert!(v["warning"].as_str().unwrap().contains("accuracy"));
-    }
-
-    #[tokio::test]
-    async fn post_location_rejects_invalid_latitude() {
-        let app = test_router();
-
-        let payload = json!({
-            "device": "test-device",
-            "state": "moving",
-            "lineId": 1,
-            "coords": {
-                "latitude": 91.0,
-                "longitude": 139.7671
-            },
-            "timestamp": 1234567890
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/location")
-                    .header("content-type", "application/json")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-        let body = to_bytes(response.into_body()).await.unwrap();
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["ok"], false);
-        assert!(v["error"].as_str().unwrap().contains("out of range"));
-    }
-
-    #[tokio::test]
-    async fn post_location_rejects_negative_accuracy() {
-        let app = test_router();
-
-        let payload = json!({
-            "device": "test-device",
-            "state": "moving",
-            "lineId": 1,
-            "coords": {
-                "latitude": 35.6812,
-                "longitude": 139.7671,
-                "accuracy": -1.0
-            },
-            "timestamp": 1234567890
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/location")
-                    .header("content-type", "application/json")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-        let body = to_bytes(response.into_body()).await.unwrap();
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["ok"], false);
-        assert!(v["error"].as_str().unwrap().contains("accuracy"));
-    }
-
-    #[tokio::test]
-    async fn post_location_drops_station_id_when_moving() {
-        let state = test_state();
-        let hub = state.hub.clone();
-        let app = Router::new()
-            .route("/api/location", post(post_location))
-            .with_state(state);
-
-        let payload = json!({
-            "device": "test-device",
-            "state": "moving",
-            "stationId": 42,
-            "lineId": 1,
-            "coords": {
-                "latitude": 35.6812,
-                "longitude": 139.7671
-            },
-            "timestamp": 1234567890
-        });
-
-        let _response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/location")
-                    .header("content-type", "application/json")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        let snapshot = hub.snapshot().await;
-        assert_eq!(snapshot.len(), 1);
-        let v: Value = serde_json::from_str(&snapshot[0]).unwrap();
-        assert!(v["station_id"].is_null());
-    }
-
-    #[tokio::test]
-    async fn post_log_success() {
-        let app = test_router();
-
-        let payload = json!({
-            "device": "test-device",
-            "timestamp": 1234567890,
-            "log": {
-                "type": "app",
-                "level": "info",
-                "message": "Hello, world!"
-            }
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/log")
-                    .header("content-type", "application/json")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = to_bytes(response.into_body()).await.unwrap();
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["ok"], true);
-        assert!(v["id"].is_string());
-    }
-
-    #[tokio::test]
-    async fn post_log_rejects_empty_message() {
-        let app = test_router();
-
-        let payload = json!({
-            "device": "test-device",
-            "timestamp": 1234567890,
-            "log": {
-                "type": "app",
-                "level": "info",
-                "message": "   "
-            }
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/log")
-                    .header("content-type", "application/json")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-        let body = to_bytes(response.into_body()).await.unwrap();
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["ok"], false);
-        assert!(v["error"].as_str().unwrap().contains("message"));
-    }
-
-    #[tokio::test]
-    async fn post_log_broadcasts_to_hub() {
-        let state = test_state();
-        let hub = state.hub.clone();
-        let app = Router::new()
-            .route("/api/log", post(post_log))
-            .with_state(state);
-
-        let payload = json!({
-            "device": "test-device",
-            "timestamp": 1234567890,
-            "log": {
-                "type": "system",
-                "level": "warn",
-                "message": "Test warning"
-            }
-        });
-
-        let _response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/log")
-                    .header("content-type", "application/json")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        let snapshot = hub.snapshot().await;
-        assert_eq!(snapshot.len(), 1);
-        let v: Value = serde_json::from_str(&snapshot[0]).unwrap();
-        assert_eq!(v["type"], "log");
-        assert_eq!(v["log"]["message"], "Test warning");
-    }
-
-    // REST API auth tests
-
-    fn auth_required_state() -> AppState {
-        AppState {
-            hub: Arc::new(TelemetryHub::new(10)),
-            storage: Storage::default(),
-            auth: AuthConfig {
-                token: Some("secret-token".into()),
-                required: true,
-            },
-            schema: build_schema(Storage::default()),
-            segmenter: SegmentEstimator::new(LineTopology::empty()),
+    #[test]
+    fn enforce_rejects_non_observer_tokens() {
+        for token in ["events-secret", "telemetry-secret"] {
+            let res = enforce_ws_auth(Some(&format!("thq, thq-auth-{token}")), &scoped_auth());
+            assert_eq!(res.unwrap_err(), AuthError::TokenMismatch);
         }
     }
 
-    fn auth_required_router() -> Router {
-        Router::new()
-            .route("/api/location", post(post_location))
-            .route("/api/log", post(post_log))
-            .with_state(auth_required_state())
-    }
+    // GraphQL mutations over HTTP
 
     #[tokio::test]
-    async fn rest_api_rejects_missing_auth() {
-        let app = auth_required_router();
+    async fn graphql_mutation_broadcasts_log_event_when_auth_disabled() {
+        let state = state_with_auth(open_auth());
+        let hub = state.hub.clone();
+        let app = graphql_router(state);
 
-        let payload = json!({
-            "device": "test-device",
-            "state": "moving",
-            "lineId": 1,
-            "coords": { "latitude": 35.0, "longitude": 139.0 },
-            "timestamp": 123
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/location")
-                    .header("content-type", "application/json")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-
-        let body = to_bytes(response.into_body()).await.unwrap();
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["ok"], false);
-        assert!(v["error"].as_str().unwrap().contains("Authorization"));
-    }
-
-    #[tokio::test]
-    async fn rest_api_rejects_wrong_token() {
-        let app = auth_required_router();
-
-        let payload = json!({
-            "device": "test-device",
-            "state": "moving",
-            "lineId": 1,
-            "coords": { "latitude": 35.0, "longitude": 139.0 },
-            "timestamp": 123
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/location")
-                    .header("content-type", "application/json")
-                    .header("authorization", "Bearer wrong-token")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-
-        let body = to_bytes(response.into_body()).await.unwrap();
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["ok"], false);
-        assert!(v["error"].as_str().unwrap().contains("invalid"));
-    }
-
-    #[tokio::test]
-    async fn rest_api_accepts_correct_token() {
-        let app = auth_required_router();
-
-        let payload = json!({
-            "device": "test-device",
-            "state": "moving",
-            "lineId": 1,
-            "coords": { "latitude": 35.0, "longitude": 139.0 },
-            "timestamp": 123
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/location")
-                    .header("content-type", "application/json")
-                    .header("authorization", "Bearer secret-token")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
+        let response = app.oneshot(send_log_event_request(None)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = to_bytes(response.into_body()).await.unwrap();
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["ok"], true);
+        let v = body_json(response).await;
+        assert!(v["errors"].is_null(), "errors: {}", v["errors"]);
+        assert!(v["data"]["sendLogEvent"]["id"].is_string());
+
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let msg: Value = serde_json::from_str(&snapshot[0]).unwrap();
+        assert_eq!(msg["type"], "log");
+        assert_eq!(msg["log"]["message"], "Hello, world!");
+    }
+
+    #[tokio::test]
+    async fn log_event_rejects_missing_auth() {
+        let state = state_with_auth(scoped_auth());
+        let hub = state.hub.clone();
+        let app = graphql_router(state);
+
+        let response = app.oneshot(send_log_event_request(None)).await.unwrap();
+        let v = body_json(response).await;
+        assert!(v["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unauthorized"));
+        assert!(hub.snapshot().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn log_event_accepts_events_token() {
+        let state = state_with_auth(scoped_auth());
+        let hub = state.hub.clone();
+        let app = graphql_router(state);
+
+        let response = app
+            .oneshot(send_log_event_request(Some("Bearer events-secret")))
+            .await
+            .unwrap();
+        let v = body_json(response).await;
+        assert!(v["errors"].is_null(), "errors: {}", v["errors"]);
+        assert_eq!(hub.snapshot().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn log_event_accepts_telemetry_token() {
+        let state = state_with_auth(scoped_auth());
+        let hub = state.hub.clone();
+        let app = graphql_router(state);
+
+        let response = app
+            .oneshot(send_log_event_request(Some("Bearer telemetry-secret")))
+            .await
+            .unwrap();
+        let v = body_json(response).await;
+        assert!(v["errors"].is_null(), "errors: {}", v["errors"]);
+        assert_eq!(hub.snapshot().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn log_event_rejects_observer_token() {
+        let state = state_with_auth(scoped_auth());
+        let hub = state.hub.clone();
+        let app = graphql_router(state);
+
+        let response = app
+            .oneshot(send_log_event_request(Some("Bearer observer-secret")))
+            .await
+            .unwrap();
+        let v = body_json(response).await;
+        assert!(v["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unauthorized"));
+        assert!(hub.snapshot().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn location_accepts_telemetry_token() {
+        let state = state_with_auth(scoped_auth());
+        let hub = state.hub.clone();
+        let app = graphql_router(state);
+
+        let response = app
+            .oneshot(send_location_request(Some("Bearer telemetry-secret")))
+            .await
+            .unwrap();
+        let v = body_json(response).await;
+        assert!(v["errors"].is_null(), "errors: {}", v["errors"]);
+        assert!(v["data"]["sendLocation"]["id"].is_string());
+
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let msg: Value = serde_json::from_str(&snapshot[0]).unwrap();
+        assert_eq!(msg["type"], "location_update");
+    }
+
+    #[tokio::test]
+    async fn location_rejects_events_token() {
+        let state = state_with_auth(scoped_auth());
+        let hub = state.hub.clone();
+        let app = graphql_router(state);
+
+        let response = app
+            .oneshot(send_location_request(Some("Bearer events-secret")))
+            .await
+            .unwrap();
+        let v = body_json(response).await;
+        assert!(v["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("telemetry"));
+        assert!(hub.snapshot().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn location_rejects_observer_token() {
+        let state = state_with_auth(scoped_auth());
+        let hub = state.hub.clone();
+        let app = graphql_router(state);
+
+        let response = app
+            .oneshot(send_location_request(Some("Bearer observer-secret")))
+            .await
+            .unwrap();
+        let v = body_json(response).await;
+        assert!(!v["errors"].is_null());
+        assert!(hub.snapshot().await.is_empty());
+    }
+
+    #[test]
+    fn mutation_auth_grants_everything_when_disabled() {
+        let auth = mutation_auth(&HeaderMap::new(), &open_auth());
+        assert!(auth.can_send_events);
+        assert!(auth.can_send_location);
+    }
+
+    #[test]
+    fn mutation_auth_denies_missing_header() {
+        let auth = mutation_auth(&HeaderMap::new(), &scoped_auth());
+        assert!(!auth.can_send_events);
+        assert!(!auth.can_send_location);
     }
 }

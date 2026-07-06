@@ -1,7 +1,8 @@
+use async_graphql::Enum;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
-#[derive(Debug, Clone, Serialize_repr, Deserialize_repr, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, PartialEq, Eq, Enum)]
 #[repr(u8)]
 pub enum BatteryState {
     Unknown = 0,
@@ -10,7 +11,7 @@ pub enum BatteryState {
     Full = 3,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum MovementState {
     Arrived,
@@ -30,7 +31,7 @@ impl MovementState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum LogLevel {
     Debug,
@@ -50,7 +51,7 @@ impl LogLevel {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum LogType {
     System,
@@ -69,14 +70,6 @@ impl LogType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Coords {
-    pub latitude: f64,
-    pub longitude: f64,
-    pub accuracy: Option<f64>,
-    pub speed: Option<f64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogBody {
     pub r#type: LogType,
     pub level: LogLevel,
@@ -90,36 +83,6 @@ pub enum IncomingMessage {
         #[serde(default)]
         device: Option<String>,
     },
-}
-
-/// REST API用の位置情報リクエスト
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LocationUpdateRequest {
-    #[serde(default)]
-    pub id: Option<String>,
-    pub device: String,
-    pub state: MovementState,
-    #[serde(default)]
-    pub station_id: Option<i32>,
-    pub line_id: i32,
-    pub coords: Coords,
-    pub timestamp: u64,
-    #[serde(default)]
-    pub battery_level: Option<f64>,
-    #[serde(default)]
-    pub battery_state: Option<BatteryState>,
-}
-
-/// REST API用のログリクエスト
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LogRequest {
-    #[serde(default)]
-    pub id: Option<String>,
-    pub device: String,
-    pub timestamp: u64,
-    pub log: LogBody,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -196,19 +159,23 @@ mod tests {
     }
 
     #[test]
-    fn location_update_request_deserializes() {
-        let json = r#"{
-            "device":"dev",
-            "state":"moving",
-            "lineId":7,
-            "stationId":42,
-            "coords":{"latitude":1.0,"longitude":2.0,"accuracy":null,"speed":3.0},
-            "timestamp":123
-        }"#;
+    fn outgoing_log_has_type_field() {
+        let msg = OutgoingMessage::Log(OutgoingLog {
+            id: "id1".into(),
+            device: "dev".into(),
+            timestamp: 42,
+            log: LogBody {
+                r#type: LogType::App,
+                level: LogLevel::Info,
+                message: "hello".into(),
+            },
+        });
 
-        let req: LocationUpdateRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.line_id, 7);
-        assert_eq!(req.station_id, Some(42));
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["type"], "log");
+        assert_eq!(json["device"], "dev");
+        assert_eq!(json["log"]["level"], "info");
+        assert_eq!(json["log"]["message"], "hello");
     }
 
     #[test]
@@ -236,6 +203,6 @@ mod tests {
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "location_update");
         assert_eq!(json["device"], "dev");
-        assert_eq!(json["coords"]["speed"], 3.0); // Some(3.0) serializes as 3.0
+        assert_eq!(json["coords"]["speed"], 3.0);
     }
 }

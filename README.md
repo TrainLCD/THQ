@@ -1,15 +1,14 @@
 # thq-server
 
-A telemetry server for [TrainLCD](https://github.com/TrainLCD). It provides real-time event streaming via WebSocket, a REST API for data ingestion, and a GraphQL API for aggregated reporting — all backed by optional PostgreSQL persistence.
+A telemetry server for [TrainLCD](https://github.com/TrainLCD). It provides real-time event streaming via WebSocket and a GraphQL API for data ingestion and aggregated reporting — all backed by optional PostgreSQL persistence.
 
 ## Features
 
 - **WebSocket** — Real-time broadcast of location updates and log events
-- **REST API** — Location ingestion (`POST /api/location`) and log submission (`POST /api/log`)
-- **GraphQL** — Aggregated per-line accuracy reports (`POST /graphql`)
+- **GraphQL** — Event ingestion (`sendLogEvent`, `sendLocation` mutations) and aggregated per-line accuracy reports (`POST /graphql`)
 - **PostgreSQL persistence** — Optionally stores all events in the database
 - **Ring buffer** — Keeps the latest N events in memory (default 1000)
-- **Authentication** — WebSocket subprotocol-based auth; REST Bearer token auth
+- **Scoped authentication** — Three shared secrets: observer (WebSocket only), events (log submission only), telemetry (log + location submission)
 - **Line topology** — Automatic segment annotation from a CSV topology file
 
 ## Requirements
@@ -32,15 +31,18 @@ cargo run -- --config config.toml
 # With PostgreSQL persistence
 cargo run -- --database-url postgres://user:pass@localhost:5432/thq
 
-# With WebSocket auth
-THQ_WS_AUTH_TOKEN=secret cargo run -- --host 0.0.0.0 --port 8080
+# With authentication
+THQ_OBSERVER_AUTH_TOKEN=obs-secret \
+THQ_EVENTS_AUTH_TOKEN=events-secret \
+THQ_TELEMETRY_AUTH_TOKEN=telemetry-secret \
+cargo run -- --host 0.0.0.0 --port 8080
 ```
 
 ### Docker Compose
 
 ```bash
-# Set the auth token in .env
-echo 'THQ_WS_AUTH_TOKEN=your-secret' > .env
+# Set the auth tokens in .env (see .env.example)
+cp .env.example .env
 
 # Build & start (includes PostgreSQL)
 docker compose up --build
@@ -51,7 +53,6 @@ Endpoints after startup:
 | Endpoint | URL |
 |---|---|
 | WebSocket | `ws://localhost:8080/ws` |
-| REST API | `http://localhost:8080/api/location`, `/api/log` |
 | GraphQL Playground | `http://localhost:8080/graphql` |
 | Health check | `http://localhost:8080/healthz` |
 
@@ -64,8 +65,10 @@ host = "0.0.0.0"
 port = 8080
 ring_size = 1000
 database_url = "postgres://user:pass@localhost:5432/thq"
-ws_auth_token = "change-me"
-ws_auth_required = true
+observer_auth_token = "change-me-observer"
+events_auth_token = "change-me-events"
+telemetry_auth_token = "change-me-telemetry"
+auth_required = true
 ```
 
 | Key | Environment variable | Default | Description |
@@ -74,49 +77,113 @@ ws_auth_required = true
 | `port` | — | `8080` | Listen port |
 | `ring_size` | — | `1000` | Ring buffer capacity |
 | `database_url` | `DATABASE_URL` | — | PostgreSQL connection URL |
-| `ws_auth_token` | `THQ_WS_AUTH_TOKEN` | — | Auth token |
-| `ws_auth_required` | `THQ_WS_AUTH_REQUIRED` | `true`* | Require authentication |
+| `observer_auth_token` | `THQ_OBSERVER_AUTH_TOKEN` | — | Token for WebSocket observers |
+| `events_auth_token` | `THQ_EVENTS_AUTH_TOKEN` | — | Token allowed to send log events |
+| `telemetry_auth_token` | `THQ_TELEMETRY_AUTH_TOKEN` | — | Token allowed to send log events **and** location updates |
+| `auth_required` | `THQ_AUTH_REQUIRED` | `true`* | Require authentication |
 
-\* Defaults to `true` when a token is configured.
+\* Defaults to `true` when any token is configured.
+
+## Authentication
+
+Three shared secrets grant exactly one role each:
+
+| Token | WebSocket subscribe | `sendLogEvent` | `sendLocation` |
+|---|---|---|---|
+| Observer | ✅ | ❌ | ❌ |
+| Events | ❌ | ✅ | ❌ |
+| Telemetry | ❌ | ✅ | ✅ |
+
+- **WebSocket** — send the observer token via subprotocols: `Sec-WebSocket-Protocol: thq, thq-auth-<token>`
+- **GraphQL mutations** — send the events or telemetry token via `Authorization: Bearer <token>`
+- **GraphQL queries** — no authentication (aggregated data only)
+
+Set `auth_required = false` to skip all authentication during local development.
 
 ## API
 
-### REST API
+### GraphQL
 
-Authenticated endpoints require an `Authorization: Bearer <token>` header.
+Endpoint: `POST /graphql` (Playground: `GET /graphql`)
 
-See [`openapi.yaml`](./openapi.yaml) for the full specification.
+#### `sendLogEvent` — Submit a log event
 
-#### `POST /api/location` — Submit a location update
+Requires the events token or the telemetry token.
 
-```json
-{
-  "device": "device-001",
-  "state": "moving",
-  "lineId": 11302,
-  "coords": {
-    "latitude": 35.6812,
-    "longitude": 139.7671,
-    "accuracy": 10.0,
-    "speed": 45.0
-  },
-  "timestamp": 1706000000000
-}
-```
-
-#### `POST /api/log` — Submit a log entry
-
-```json
-{
-  "device": "device-001",
-  "timestamp": 1706000000000,
-  "log": {
-    "type": "app",
-    "level": "info",
-    "message": "GPS signal acquired"
+```graphql
+mutation {
+  sendLogEvent(input: {
+    device: "device-001"
+    timestamp: 1706000000000
+    type: APP          # SYSTEM | APP | CLIENT
+    level: INFO        # DEBUG | INFO | WARN | ERROR
+    message: "GPS signal acquired"
+  }) {
+    id
   }
 }
 ```
+
+#### `sendLocation` — Submit a location update
+
+Requires the telemetry token; the events token is deliberately not enough to publish positional data. The update is validated, annotated with segment information, broadcast to WebSocket subscribers, and persisted.
+
+```graphql
+mutation {
+  sendLocation(input: {
+    device: "device-001"
+    state: MOVING      # ARRIVED | APPROACHING | PASSING | MOVING
+    lineId: 11302
+    coords: {
+      latitude: 35.6812
+      longitude: 139.7671
+      accuracy: 10.0
+      speed: 45.0
+    }
+    timestamp: 1706000000000
+  }) {
+    id
+    warning   # set when e.g. the reported accuracy exceeds 100 m
+  }
+}
+```
+
+`stationId` is only meaningful when `state` is `ARRIVED` or `PASSING` and is ignored otherwise. `batteryLevel` (0.0–1.0) and `batteryState` (`UNKNOWN | UNPLUGGED | CHARGING | FULL`) are optional.
+
+#### `accuracyByLine` — Aggregated accuracy report
+
+Returns aggregated accuracy metrics per line. Raw location data is never exposed through queries.
+
+```graphql
+query {
+  accuracyByLine(
+    lineId: "45"
+    from: "2024-12-01T00:00:00Z"
+    to: "2024-12-03T00:00:00Z"
+    bucketSize: HOUR
+    limit: 100
+  ) {
+    lineId
+    buckets {
+      bucketStart
+      bucketEnd
+      avgAccuracy
+      p90Accuracy
+      sampleCount
+    }
+  }
+}
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `lineId` | `ID!` | Line ID |
+| `from` | `DateTime!` | Start of the time range |
+| `to` | `DateTime!` | End of the time range |
+| `bucketSize` | `TimeBucketSize!` | `MINUTE`, `HOUR`, or `DAY` |
+| `limit` | `Int` | Max buckets returned (default 500, cap 2000) |
+
+Maximum time span per bucket size: MINUTE ≤ 7 days, HOUR ≤ 90 days, DAY ≤ 365 days.
 
 #### `GET /healthz` — Health check
 
@@ -126,19 +193,7 @@ No authentication required. Returns `200 OK` if the server is running.
 
 Endpoint: `ws://<host>:<port>/ws`
 
-Once connected, the server broadcasts `location_update` and `log` messages in real time.
-
-#### Authentication
-
-Send the token via WebSocket subprotocols:
-
-```text
-Sec-WebSocket-Protocol: thq, thq-auth-<token>
-```
-
-On success the server responds with `Sec-WebSocket-Protocol: thq`. When `ws_auth_required` is `true`, a missing or invalid token results in HTTP 401.
-
-Set `ws_auth_required = false` to skip authentication during local development.
+Once connected, the server broadcasts `location_update` and `log` messages in real time. Authentication uses the observer token (see [Authentication](#authentication)); on success the server responds with `Sec-WebSocket-Protocol: thq`, while a missing or invalid token results in HTTP 401.
 
 #### Message formats
 
@@ -190,48 +245,11 @@ Set `ws_auth_required = false` to skip authentication during local development.
 {
   "type": "error",
   "error": {
-    "type": "websocket_message_error | json_parse_error | payload_parse_error | accuracy_low | invalid_coords | unknown",
+    "type": "websocket_message_error | json_parse_error",
     "reason": "..."
   }
 }
 ```
-
-### GraphQL
-
-Endpoint: `POST /graphql` (Playground: `GET /graphql`)
-
-Returns aggregated accuracy metrics per line. Raw location data is never exposed.
-
-```graphql
-query {
-  accuracyByLine(
-    lineId: "45"
-    from: "2024-12-01T00:00:00Z"
-    to: "2024-12-03T00:00:00Z"
-    bucketSize: HOUR
-    limit: 100
-  ) {
-    lineId
-    buckets {
-      bucketStart
-      bucketEnd
-      avgAccuracy
-      p90Accuracy
-      sampleCount
-    }
-  }
-}
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `lineId` | `ID!` | Line ID |
-| `from` | `DateTime!` | Start of the time range |
-| `to` | `DateTime!` | End of the time range |
-| `bucketSize` | `TimeBucketSize!` | `MINUTE`, `HOUR`, or `DAY` |
-| `limit` | `Int` | Max buckets returned (default 500, cap 2000) |
-
-Maximum time span per bucket size: MINUTE ≤ 7 days, HOUR ≤ 90 days, DAY ≤ 365 days.
 
 ## Persistence
 
