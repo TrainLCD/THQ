@@ -133,7 +133,7 @@ export function useAccuracyByLine(params: {
   lineId: string;
   from: string; // ISO 8601 (例: "2026-07-01T00:00:00Z")
   to: string;
-  bucketSize: "MINUTE" | "HOUR" | "DAY";
+  bucketSize: "minute" | "hour" | "day";
   limit?: number;
 }) {
   return useQuery({
@@ -152,7 +152,7 @@ function AccuracyChart() {
     lineId: "11302",
     from: "2026-07-01T00:00:00Z",
     to: "2026-07-06T00:00:00Z",
-    bucketSize: "HOUR",
+    bucketSize: "hour",
   });
 
   if (isPending) return <p>読み込み中…</p>;
@@ -170,7 +170,7 @@ function AccuracyChart() {
 }
 ```
 
-バケットサイズごとの最大期間(MINUTE ≤ 7 日、HOUR ≤ 90 日、DAY ≤ 365 日)を超えるとエラーになる点に注意してください。
+バケットサイズごとの最大期間(minute ≤ 7 日、hour ≤ 90 日、day ≤ 365 日)を超えるとエラーになる点に注意してください。
 
 ## Mutation: ログイベント送信(`sendLogEvent`)
 
@@ -193,11 +193,11 @@ export interface LogEventInput {
   sessionId: string; // 必須。クライアント側で生成した一意な文字列(後述)
   device?: string; // 匿名性確保のため省略可。省略時は null として配信・保存される
   appVersion: string; // 必須。アプリのバージョン文字列(空はサーバーが拒否)
-  platform: "IOS" | "ANDROID" | "MACOS" | "UNKNOWN"; // 必須
-  channel: "PRODUCTION" | "CANARY"; // 必須
+  platform: "ios" | "android" | "macos" | "unknown"; // 必須
+  channel: "production" | "canary"; // 必須
   timestamp: number; // Unix ミリ秒 (Date.now())
-  type: "SYSTEM" | "APP" | "CLIENT";
-  level: "DEBUG" | "INFO" | "WARN" | "ERROR";
+  type: "system" | "app" | "client";
+  level: "debug" | "info" | "warn" | "error";
   message: string; // 空文字・空白のみはサーバーが拒否
 }
 
@@ -218,11 +218,11 @@ sendLog.mutate({
   sessionId,
   device: "device-001",
   appVersion: "1.2.3",
-  platform: "IOS",
-  channel: "PRODUCTION",
+  platform: "ios",
+  channel: "production",
   timestamp: Date.now(),
-  type: "APP",
-  level: "INFO",
+  type: "app",
+  level: "info",
   message: "GPS signal acquired",
 });
 ```
@@ -233,11 +233,11 @@ sendLog.mutate({
 sendLog.mutate({
   sessionId,
   appVersion: "1.2.3",
-  platform: "IOS",
-  channel: "PRODUCTION",
+  platform: "ios",
+  channel: "production",
   timestamp: Date.now(),
-  type: "APP",
-  level: "INFO",
+  type: "app",
+  level: "info",
   message: "started",
 });
 ```
@@ -287,8 +287,8 @@ export interface InteractionEventInput {
   sessionId: string; // 必須。クライアント側で生成した一意な文字列
   device?: string; // 匿名性確保のため省略可
   appVersion: string; // 必須。アプリのバージョン文字列(空はサーバーが拒否)
-  platform: "IOS" | "ANDROID" | "MACOS" | "UNKNOWN"; // 必須
-  channel: "PRODUCTION" | "CANARY"; // 必須
+  platform: "ios" | "android" | "macos" | "unknown"; // 必須
+  channel: "production" | "canary"; // 必須
   timestamp: number; // Unix ミリ秒 (Date.now())
   eventName: string; // 任意のイベント名。空文字・空白のみはサーバーが拒否
   properties?: Record<string, string | number | boolean | null>; // 省略可(後述)
@@ -321,8 +321,8 @@ const track = (
   sendInteraction.mutate({
     sessionId,
     appVersion: "1.2.3",
-    platform: "IOS",
-    channel: "PRODUCTION",
+    platform: "ios",
+    channel: "production",
     timestamp: Date.now(),
     eventName,
     properties,
@@ -364,8 +364,8 @@ const SEND_LOCATION = /* GraphQL */ `
 export interface LocationEventInput {
   sessionId: string; // 必須。クライアント側で生成した一意な文字列
   device: string; // 必須(sendLogEvent と異なり省略不可)
-  state: "ARRIVED" | "APPROACHING" | "PASSING" | "MOVING";
-  stationId?: number; // ARRIVED / PASSING のときのみ有効。MOVING / APPROACHING では無視される
+  state: "arrived" | "approaching" | "passing" | "moving";
+  stationId?: number; // arrived / passing のときのみ有効。moving / approaching では無視される
   lineId: number;
   coords: {
     latitude: number; // -90〜90
@@ -375,7 +375,7 @@ export interface LocationEventInput {
   };
   timestamp: number; // Unix ミリ秒
   batteryLevel?: number; // 0.0〜1.0
-  batteryState?: "UNKNOWN" | "UNPLUGGED" | "CHARGING" | "FULL";
+  batteryState?: "unknown" | "unplugged" | "charging" | "full";
 }
 
 interface SendLocationData {
@@ -406,7 +406,7 @@ useEffect(() => {
     sendLocation.mutate({
       sessionId,
       device: "device-001",
-      state: "MOVING",
+      state: "moving",
       lineId: 11302,
       coords: {
         latitude: pos.coords.latitude,

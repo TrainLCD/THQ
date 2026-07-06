@@ -502,12 +502,12 @@ mod tests {
                 sendLogEvent(input: {
                     sessionId: "sess-1",
                     appVersion: "1.2.3",
-                    platform: IOS,
-                    channel: PRODUCTION,
+                    platform: ios,
+                    channel: production,
                     device: "test-device",
                     timestamp: 1706000000000,
-                    type: APP,
-                    level: INFO,
+                    type: app,
+                    level: info,
                     message: "Hello, world!"
                 }) { sessionId }
             }"#,
@@ -521,7 +521,7 @@ mod tests {
                 sendLocation(input: {
                     sessionId: "sess-1",
                     device: "test-device",
-                    state: MOVING,
+                    state: moving,
                     lineId: 1,
                     coords: { latitude: 35.6812, longitude: 139.7671 },
                     timestamp: 1706000000000

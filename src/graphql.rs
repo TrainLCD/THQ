@@ -36,6 +36,7 @@ pub struct MutationAuth {
 const HARD_LIMIT: i32 = 2000;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq, Debug)]
+#[graphql(rename_items = "lowercase")]
 pub enum TimeBucketSize {
     Minute,
     Hour,
@@ -250,7 +251,7 @@ pub struct LocationEventInput {
     /// Device identifier.
     pub device: String,
     pub state: MovementState,
-    /// Only meaningful when state is ARRIVED or PASSING; ignored otherwise.
+    /// Only meaningful when state is arrived or passing; ignored otherwise.
     pub station_id: Option<i32>,
     pub line_id: i32,
     pub coords: CoordsInput,
@@ -609,12 +610,12 @@ mod tests {
                     sendLogEvent(input: {
                         sessionId: "sess-abc",
                         appVersion: "1.2.3",
-                        platform: IOS,
-                        channel: PRODUCTION,
+                        platform: ios,
+                        channel: production,
                         device: "dev",
                         timestamp: 1706000000000,
-                        type: APP,
-                        level: INFO,
+                        type: app,
+                        level: info,
                         message: "hello"
                     }) { sessionId }
                 }"#,
@@ -651,11 +652,11 @@ mod tests {
                     sendLogEvent(input: {
                         sessionId: "sess-1",
                         appVersion: "  ",
-                        platform: ANDROID,
-                        channel: CANARY,
+                        platform: android,
+                        channel: canary,
                         timestamp: 1,
-                        type: APP,
-                        level: INFO,
+                        type: app,
+                        level: info,
                         message: "hi"
                     }) { sessionId }
                 }"#,
@@ -679,11 +680,11 @@ mod tests {
                     sendLogEvent(input: {
                         sessionId: "sess-anon",
                         appVersion: "1.2.3",
-                        platform: IOS,
-                        channel: PRODUCTION,
+                        platform: ios,
+                        channel: production,
                         timestamp: 1,
-                        type: APP,
-                        level: INFO,
+                        type: app,
+                        level: info,
                         message: "anonymous hello"
                     }) { sessionId }
                 }"#,
@@ -710,7 +711,7 @@ mod tests {
                 r#"mutation {
                     sendLocation(input: {
                         sessionId: "sess-1",
-                        state: MOVING,
+                        state: moving,
                         lineId: 1,
                         coords: { latitude: 35.6812, longitude: 139.7671 },
                         timestamp: 1
@@ -737,12 +738,12 @@ mod tests {
                     sendLogEvent(input: {
                         sessionId: "   ",
                         appVersion: "1.2.3",
-                        platform: IOS,
-                        channel: PRODUCTION,
+                        platform: ios,
+                        channel: production,
                         device: "dev",
                         timestamp: 1,
-                        type: SYSTEM,
-                        level: WARN,
+                        type: system,
+                        level: warn,
                         message: "hi"
                     }) { sessionId }
                 }"#,
@@ -766,12 +767,12 @@ mod tests {
                     sendLogEvent(input: {
                         sessionId: "sess-1",
                         appVersion: "1.2.3",
-                        platform: IOS,
-                        channel: PRODUCTION,
+                        platform: ios,
+                        channel: production,
                         device: "dev",
                         timestamp: 1,
-                        type: APP,
-                        level: INFO,
+                        type: app,
+                        level: info,
                         message: "   "
                     }) { sessionId }
                 }"#,
@@ -795,12 +796,12 @@ mod tests {
                     sendLogEvent(input: {
                         sessionId: "sess-1",
                         appVersion: "1.2.3",
-                        platform: IOS,
-                        channel: PRODUCTION,
+                        platform: ios,
+                        channel: production,
                         device: "dev",
                         timestamp: 1,
-                        type: APP,
-                        level: INFO,
+                        type: app,
+                        level: info,
                         message: "hi"
                     }) { sessionId }
                 }"#,
@@ -824,8 +825,8 @@ mod tests {
                     sendInteractionEvent(input: {
                         sessionId: "sess-1",
                         appVersion: "1.2.3",
-                        platform: IOS,
-                        channel: PRODUCTION,
+                        platform: ios,
+                        channel: production,
                         device: "dev",
                         timestamp: 1706000000000,
                         eventName: "tts_request"
@@ -862,8 +863,8 @@ mod tests {
                     sendInteractionEvent(input: {
                         sessionId: "sess-1",
                         appVersion: "1.2.3",
-                        platform: IOS,
-                        channel: PRODUCTION,
+                        platform: ios,
+                        channel: production,
                         timestamp: 1,
                         eventName: "tab_change",
                         properties: { tab: "map", index: 2, pinned: true, note: null }
@@ -896,8 +897,8 @@ mod tests {
                             sendInteractionEvent(input: {{
                                 sessionId: "sess-1",
                                 appVersion: "1.2.3",
-                                platform: IOS,
-                                channel: PRODUCTION,
+                                platform: ios,
+                                channel: production,
                                 timestamp: 1,
                                 eventName: "tab_change",
                                 properties: {bad}
@@ -925,8 +926,8 @@ mod tests {
                     sendInteractionEvent(input: {
                         sessionId: "sess-1",
                         appVersion: "1.2.3",
-                        platform: IOS,
-                        channel: PRODUCTION,
+                        platform: ios,
+                        channel: production,
                         timestamp: 1,
                         eventName: "app_launch"
                     }) { sessionId }
@@ -954,8 +955,8 @@ mod tests {
                     sendInteractionEvent(input: {
                         sessionId: "sess-1",
                         appVersion: "1.2.3",
-                        platform: IOS,
-                        channel: PRODUCTION,
+                        platform: ios,
+                        channel: production,
                         timestamp: 1,
                         eventName: "  "
                     }) { sessionId }
@@ -980,8 +981,8 @@ mod tests {
                     sendInteractionEvent(input: {
                         sessionId: "sess-1",
                         appVersion: "1.2.3",
-                        platform: IOS,
-                        channel: PRODUCTION,
+                        platform: ios,
+                        channel: production,
                         timestamp: 1,
                         eventName: "app_launch"
                     }) { sessionId }
@@ -1002,7 +1003,7 @@ mod tests {
 
         let resp = schema
             .execute(request(
-                &location_mutation("MOVING", ", speed: 50.0"),
+                &location_mutation("moving", ", speed: 50.0"),
                 TELEMETRY,
             ))
             .await;
@@ -1025,7 +1026,7 @@ mod tests {
         let schema = test_schema(hub.clone());
 
         let resp = schema
-            .execute(request(&location_mutation("MOVING", ""), EVENTS_ONLY))
+            .execute(request(&location_mutation("moving", ""), EVENTS_ONLY))
             .await;
 
         assert!(!resp.errors.is_empty());
@@ -1044,7 +1045,7 @@ mod tests {
                     sendLocation(input: {
                         sessionId: "sess-1",
                         device: "dev",
-                        state: MOVING,
+                        state: moving,
                         lineId: 1,
                         coords: { latitude: 91.0, longitude: 139.7671 },
                         timestamp: 1
@@ -1066,7 +1067,7 @@ mod tests {
 
         let resp = schema
             .execute(request(
-                &location_mutation("MOVING", ", accuracy: -1.0"),
+                &location_mutation("moving", ", accuracy: -1.0"),
                 TELEMETRY,
             ))
             .await;
@@ -1083,7 +1084,7 @@ mod tests {
 
         let resp = schema
             .execute(request(
-                &location_mutation("MOVING", ", accuracy: 150.0"),
+                &location_mutation("moving", ", accuracy: 150.0"),
                 TELEMETRY,
             ))
             .await;
@@ -1107,7 +1108,7 @@ mod tests {
                     sendLocation(input: {
                         sessionId: "sess-1",
                         device: "dev",
-                        state: MOVING,
+                        state: moving,
                         stationId: 42,
                         lineId: 1,
                         coords: { latitude: 35.6812, longitude: 139.7671 },

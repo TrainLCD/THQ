@@ -29,6 +29,7 @@ async_graphql::scalar!(
 );
 
 #[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, PartialEq, Eq, Enum)]
+#[graphql(rename_items = "lowercase")]
 #[repr(u8)]
 pub enum BatteryState {
     Unknown = 0,
@@ -38,6 +39,7 @@ pub enum BatteryState {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
+#[graphql(rename_items = "lowercase")]
 #[serde(rename_all = "snake_case")]
 pub enum MovementState {
     Arrived,
@@ -58,6 +60,7 @@ impl MovementState {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
+#[graphql(rename_items = "lowercase")]
 #[serde(rename_all = "snake_case")]
 pub enum Platform {
     Ios,
@@ -78,6 +81,7 @@ impl Platform {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
+#[graphql(rename_items = "lowercase")]
 #[serde(rename_all = "snake_case")]
 pub enum Channel {
     Production,
@@ -94,6 +98,7 @@ impl Channel {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
+#[graphql(rename_items = "lowercase")]
 #[serde(rename_all = "snake_case")]
 pub enum LogLevel {
     Debug,
@@ -114,6 +119,7 @@ impl LogLevel {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
+#[graphql(rename_items = "lowercase")]
 #[serde(rename_all = "snake_case")]
 pub enum LogType {
     System,

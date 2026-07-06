@@ -116,11 +116,11 @@ mutation {
     sessionId: "d0f7..."   # client-generated unique session identifier
     device: "device-001"   # optional — omit to submit anonymously
     appVersion: "1.2.3"
-    platform: IOS      # IOS | ANDROID | MACOS | UNKNOWN
-    channel: PRODUCTION    # PRODUCTION | CANARY
+    platform: ios      # ios | android | macos | unknown
+    channel: production    # production | canary
     timestamp: 1706000000000
-    type: APP          # SYSTEM | APP | CLIENT
-    level: INFO        # DEBUG | INFO | WARN | ERROR
+    type: app          # system | app | client
+    level: info        # debug | info | warn | error
     message: "GPS signal acquired"
   }) {
     sessionId
@@ -140,8 +140,8 @@ mutation {
     sessionId: "d0f7..."   # client-generated unique session identifier
     device: "device-001"   # optional — omit to submit anonymously
     appVersion: "1.2.3"
-    platform: IOS      # IOS | ANDROID | MACOS | UNKNOWN
-    channel: PRODUCTION    # PRODUCTION | CANARY
+    platform: ios      # ios | android | macos | unknown
+    channel: production    # production | canary
     timestamp: 1706000000000
     eventName: "tab_change"    # arbitrary event name
     properties: { tab: "map", index: 2, pinned: true }   # optional flat map
@@ -162,7 +162,7 @@ mutation {
   sendLocation(input: {
     sessionId: "d0f7..."   # client-generated unique session identifier
     device: "device-001"
-    state: MOVING      # ARRIVED | APPROACHING | PASSING | MOVING
+    state: moving      # arrived | approaching | passing | moving
     lineId: 11302
     coords: {
       latitude: 35.6812
@@ -178,7 +178,7 @@ mutation {
 }
 ```
 
-`stationId` is only meaningful when `state` is `ARRIVED` or `PASSING` and is ignored otherwise. `batteryLevel` (0.0–1.0) and `batteryState` (`UNKNOWN | UNPLUGGED | CHARGING | FULL`) are optional.
+`stationId` is only meaningful when `state` is `arrived` or `passing` and is ignored otherwise. `batteryLevel` (0.0–1.0) and `batteryState` (`unknown | unplugged | charging | full`) are optional.
 
 #### `accuracyByLine` — Aggregated accuracy report
 
@@ -190,7 +190,7 @@ query {
     lineId: "45"
     from: "2024-12-01T00:00:00Z"
     to: "2024-12-03T00:00:00Z"
-    bucketSize: HOUR
+    bucketSize: hour
     limit: 100
   ) {
     lineId
@@ -210,10 +210,10 @@ query {
 | `lineId` | `ID!` | Line ID |
 | `from` | `DateTime!` | Start of the time range |
 | `to` | `DateTime!` | End of the time range |
-| `bucketSize` | `TimeBucketSize!` | `MINUTE`, `HOUR`, or `DAY` |
+| `bucketSize` | `TimeBucketSize!` | `minute`, `hour`, or `day` |
 | `limit` | `Int` | Max buckets returned (default 500, cap 2000) |
 
-Maximum time span per bucket size: MINUTE ≤ 7 days, HOUR ≤ 90 days, DAY ≤ 365 days.
+Maximum time span per bucket size: minute ≤ 7 days, hour ≤ 90 days, day ≤ 365 days.
 
 #### `GET /healthz` — Health check
 
