@@ -83,7 +83,20 @@ const ws = new WebSocket("wss://thq.example.com/ws", [
 }
 ```
 
-ログイベントは匿名で送信できるため、`device` が `null` の場合があります(`location_update` の `device` は常に非 null です)。
+**interaction** — `sendInteractionEvent` Mutation で登録されたユーザーインタラクション
+
+```json
+{
+  "type": "interaction",
+  "id": "uuid",
+  "session_id": "client-generated-session-id",
+  "device": "device-001",
+  "timestamp": 1706000000000,
+  "event_name": "tts_request"
+}
+```
+
+ログイベントとインタラクションイベントは匿名で送信できるため、`device` が `null` の場合があります(`location_update` の `device` は常に非 null です)。
 
 **error** — プロトコルエラーの通知(不正な JSON を送った場合など)
 
@@ -140,7 +153,16 @@ export interface LogEvent {
   };
 }
 
-export type TelemetryEvent = LocationUpdateEvent | LogEvent;
+export interface InteractionEvent {
+  type: "interaction";
+  id: string; // サーバー採番のイベント ID(重複排除に使える)
+  session_id: string; // クライアント側で生成されたセッション ID
+  device: string | null; // 匿名送信されたイベントは null
+  timestamp: number;
+  event_name: string; // 例: "app_launch", "tts_request"
+}
+
+export type TelemetryEvent = LocationUpdateEvent | LogEvent | InteractionEvent;
 
 const FEED_KEY = ["telemetryFeed"] as const;
 const MAX_EVENTS = 1000;
@@ -169,7 +191,7 @@ export function useTelemetryFeed(
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
-        if (msg.type !== "location_update" && msg.type !== "log") {
+        if (msg.type !== "location_update" && msg.type !== "log" && msg.type !== "interaction") {
           if (msg.type === "error") {
             console.warn("thq-server error:", msg.error);
           }

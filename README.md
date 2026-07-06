@@ -5,7 +5,7 @@ A telemetry server for [TrainLCD](https://github.com/TrainLCD). It provides real
 ## Features
 
 - **WebSocket** — Real-time broadcast of location updates and log events
-- **GraphQL** — Event ingestion (`sendLogEvent`, `sendLocation` mutations) and aggregated per-line accuracy reports (`POST /graphql`)
+- **GraphQL** — Event ingestion (`sendLogEvent`, `sendInteractionEvent`, `sendLocation` mutations) and aggregated per-line accuracy reports (`POST /graphql`)
 - **PostgreSQL persistence** — Optionally stores all events in the database
 - **Ring buffer** — Keeps the latest N events in memory (default 1000)
 - **Scoped authentication** — Three shared secrets: observer (WebSocket only), events (log submission only), telemetry (log + location submission)
@@ -88,7 +88,7 @@ auth_required = true
 
 Three shared secrets grant exactly one role each:
 
-| Token | WebSocket subscribe | `sendLogEvent` | `sendLocation` |
+| Token | WebSocket subscribe | `sendLogEvent` / `sendInteractionEvent` | `sendLocation` |
 |---|---|---|---|
 | Observer | ✅ | ❌ | ❌ |
 | Events | ❌ | ✅ | ❌ |
@@ -126,6 +126,23 @@ mutation {
 ```
 
 `sessionId` is a mandatory, client-generated unique identifier (any string). Event IDs are always generated server-side. `device` is optional so that log events can be submitted anonymously; omitted values are broadcast and stored as `null`.
+
+#### `sendInteractionEvent` — Record a user-driven interaction
+
+Requires the events token or the telemetry token (any token except the observer one). Unlike `sendLogEvent`, which carries console.* output, this records a named user action such as an app launch, tab change, TTS request result, or feedback submission result.
+
+```graphql
+mutation {
+  sendInteractionEvent(input: {
+    sessionId: "d0f7..."   # client-generated unique session identifier
+    device: "device-001"   # optional — omit to submit anonymously
+    timestamp: 1706000000000
+    eventName: "tts_request"   # arbitrary event name
+  }) {
+    sessionId
+  }
+}
+```
 
 #### `sendLocation` — Submit a location update
 
@@ -197,7 +214,7 @@ No authentication required. Returns `200 OK` if the server is running.
 
 Endpoint: `ws://<host>:<port>/ws`
 
-Once connected, the server broadcasts `location_update` and `log` messages in real time. Authentication uses the observer token (see [Authentication](#authentication)); on success the server responds with `Sec-WebSocket-Protocol: thq`, while a missing or invalid token results in HTTP 401.
+Once connected, the server broadcasts `location_update`, `log` and `interaction` messages in real time. Authentication uses the observer token (see [Authentication](#authentication)); on success the server responds with `Sec-WebSocket-Protocol: thq`, while a missing or invalid token results in HTTP 401.
 
 #### Message formats
 
@@ -247,6 +264,21 @@ Once connected, the server broadcasts `location_update` and `log` messages in re
 
 `device` is `null` when the event was submitted anonymously.
 
+**interaction**
+
+```json
+{
+  "id": "uuid",
+  "type": "interaction",
+  "session_id": "client-generated-session-id",
+  "device": "device-id",
+  "timestamp": 1234567890,
+  "event_name": "tts_request"
+}
+```
+
+As with `log`, `device` is `null` when the event was submitted anonymously.
+
 **error**
 
 ```json
@@ -267,6 +299,7 @@ When `database_url` / `DATABASE_URL` is provided, the server connects to Postgre
 |---|---|
 | `location_logs` | `id`, `session_id`, `device`, `state`, `station_id`, `line_id`, `segment_id`, `from_station_id`, `to_station_id`, `latitude`, `longitude`, `accuracy`, `speed`, `battery_level`, `battery_state`, `timestamp`, `recorded_at` |
 | `log_events` | `id`, `session_id`, `device`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at` |
+| `interaction_events` | `id`, `session_id`, `device`, `event_name`, `timestamp`, `recorded_at` |
 
 Without a `database_url` the server still accepts WebSocket traffic but does not persist messages.
 

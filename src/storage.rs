@@ -5,7 +5,8 @@ use sqlx::{postgres::PgPoolOptions, PgPool};
 use tracing::info;
 
 use crate::domain::{
-    BatteryState, LogLevel, LogType, MovementState, OutgoingLocation, OutgoingLog,
+    BatteryState, LogLevel, LogType, MovementState, OutgoingInteraction, OutgoingLocation,
+    OutgoingLog,
 };
 
 #[derive(Clone, sqlx::FromRow)]
@@ -131,6 +132,21 @@ impl Storage {
         .await?;
 
         sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS interaction_events (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                device TEXT,
+                event_name TEXT NOT NULL,
+                timestamp BIGINT NOT NULL,
+                recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_location_logs_device ON location_logs (device);",
         )
         .execute(pool)
@@ -154,6 +170,18 @@ impl Storage {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_log_events_device ON log_events (device);")
             .execute(pool)
             .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_events_name ON interaction_events (event_name);",
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_events_session ON interaction_events (session_id);",
+        )
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
@@ -211,6 +239,28 @@ impl Storage {
         .execute(pool)
         .await
         .context("failed to insert log event")?;
+
+        Ok(())
+    }
+
+    pub async fn store_interaction(&self, event: &OutgoingInteraction) -> anyhow::Result<()> {
+        let Some(pool) = &self.pool else {
+            return Ok(());
+        };
+
+        let ts = i64::try_from(event.timestamp).unwrap_or(i64::MAX);
+
+        sqlx::query(
+            "INSERT INTO interaction_events (id, session_id, device, event_name, timestamp) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(&event.id)
+        .bind(&event.session_id)
+        .bind(&event.device)
+        .bind(&event.event_name)
+        .bind(ts)
+        .execute(pool)
+        .await
+        .context("failed to insert interaction event")?;
 
         Ok(())
     }

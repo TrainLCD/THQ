@@ -90,6 +90,7 @@ pub enum IncomingMessage {
 pub enum OutgoingMessage {
     LocationUpdate(OutgoingLocation),
     Log(OutgoingLog),
+    Interaction(OutgoingInteraction),
     Error(OutgoingError),
 }
 
@@ -128,6 +129,19 @@ pub struct OutgoingLog {
     pub device: Option<String>,
     pub timestamp: u64,
     pub log: LogBody,
+}
+
+/// A user-driven interaction (e.g. app launch, tab change, TTS request).
+/// Unlike logs, which carry console.* output, this records a named action.
+#[derive(Debug, Clone, Serialize)]
+pub struct OutgoingInteraction {
+    pub id: String,
+    /// Client-generated unique session identifier.
+    pub session_id: String,
+    /// None when the sender chose to stay anonymous.
+    pub device: Option<String>,
+    pub timestamp: u64,
+    pub event_name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +196,22 @@ mod tests {
         assert_eq!(json["device"], "dev");
         assert_eq!(json["log"]["level"], "info");
         assert_eq!(json["log"]["message"], "hello");
+    }
+
+    #[test]
+    fn outgoing_interaction_has_type_field() {
+        let msg = OutgoingMessage::Interaction(OutgoingInteraction {
+            id: "id1".into(),
+            session_id: "sess-1".into(),
+            device: None,
+            timestamp: 42,
+            event_name: "app_launch".into(),
+        });
+
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["type"], "interaction");
+        assert_eq!(json["event_name"], "app_launch");
+        assert!(json["device"].is_null());
     }
 
     #[test]

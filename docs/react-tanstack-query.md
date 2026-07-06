@@ -9,6 +9,7 @@ thq-server の GraphQL API はエンドポイント `POST /graphql` で公開さ
 | 操作 | 種別 | 認証 |
 |---|---|---|
 | `sendLogEvent` | Mutation | イベント用または遠隔測定用トークン |
+| `sendInteractionEvent` | Mutation | イベント用または遠隔測定用トークン |
 | `sendLocation` | Mutation | 遠隔測定用トークンのみ |
 | `accuracyByLine` | Query | 不要 |
 
@@ -16,8 +17,8 @@ Mutation の認証は `Authorization: Bearer <token>` ヘッダで行います�
 
 | トークン | できること |
 |---|---|
-| イベント用(`THQ_EVENTS_AUTH_TOKEN`) | `sendLogEvent` のみ |
-| 遠隔測定用(`THQ_TELEMETRY_AUTH_TOKEN`) | `sendLogEvent` + `sendLocation` |
+| イベント用(`THQ_EVENTS_AUTH_TOKEN`) | `sendLogEvent` + `sendInteractionEvent` |
+| 遠隔測定用(`THQ_TELEMETRY_AUTH_TOKEN`) | `sendLogEvent` + `sendInteractionEvent` + `sendLocation` |
 
 > **セキュリティ上の注意**: ブラウザ向けにビルドした JavaScript に埋め込んだトークンは、利用者全員から見えます。イベント用・遠隔測定用トークンを Web フロントエンドに直接埋め込むのは避け、ネイティブアプリや自前のバックエンド(BFF)経由で扱ってください。認証不要な `accuracyByLine` の表示だけであればトークンは一切不要です。
 
@@ -244,6 +245,70 @@ const sessionId = crypto.randomUUID();
 ```
 
 なお、イベント自体の ID はサーバー側で常に UUID が採番されます。クライアントから ID を指定することはできないため、送信リクエストの再送はそれぞれ別イベントとして記録される点に注意してください。
+
+## Mutation: インタラクションイベント送信(`sendInteractionEvent`)
+
+ユーザー主導のインタラクション(行動)を任意のイベント名で記録します。`sendLogEvent` が `console.*` 相当の出力を送る想定なのに対し、こちらは「何をしたか」をイベント名で記録する用途です。認証は `sendLogEvent` と同じで、観測用以外のトークン(イベント用または遠隔測定用)で送信できます。
+
+イベント名は任意の文字列です。例:
+
+| eventName | 意味 |
+|---|---|
+| `app_launch` | アプリ起動 |
+| `tab_change` | アプリのタブ移動 |
+| `tts_request` | TTS(Text-to-Speech)のリクエスト |
+| `tts_success` / `tts_failure` | TTS リクエストの成功・失敗 |
+| `feedback_request` | フィードバックの送信リクエスト |
+| `feedback_success` / `feedback_failure` | フィードバック送信の成功・失敗 |
+
+```ts
+// hooks/useSendInteractionEvent.ts
+import { useMutation } from "@tanstack/react-query";
+import { gqlRequest } from "../lib/graphql";
+
+const SEND_INTERACTION_EVENT = /* GraphQL */ `
+  mutation SendInteractionEvent($input: InteractionEventInput!) {
+    sendInteractionEvent(input: $input) {
+      sessionId
+    }
+  }
+`;
+
+export interface InteractionEventInput {
+  sessionId: string; // 必須。クライアント側で生成した一意な文字列
+  device?: string; // 匿名性確保のため省略可
+  timestamp: number; // Unix ミリ秒 (Date.now())
+  eventName: string; // 任意のイベント名。空文字・空白のみはサーバーが拒否
+}
+
+export function useSendInteractionEvent(token: string) {
+  return useMutation({
+    mutationFn: (input: InteractionEventInput) =>
+      gqlRequest<{ sendInteractionEvent: { sessionId: string } }>(
+        SEND_INTERACTION_EVENT,
+        { input },
+        token,
+      ),
+  });
+}
+```
+
+使用例:
+
+```tsx
+const sendInteraction = useSendInteractionEvent(eventsToken);
+
+// アプリ起動時
+sendInteraction.mutate({ sessionId, timestamp: Date.now(), eventName: "app_launch" });
+
+// TTS リクエストの結果
+try {
+  await requestTts(text);
+  sendInteraction.mutate({ sessionId, timestamp: Date.now(), eventName: "tts_success" });
+} catch {
+  sendInteraction.mutate({ sessionId, timestamp: Date.now(), eventName: "tts_failure" });
+}
+```
 
 ## Mutation: 位置情報送信(`sendLocation`)
 

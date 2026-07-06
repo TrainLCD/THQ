@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        BatteryState, LogBody, LogLevel, LogType, MovementState, OutgoingCoords, OutgoingLocation,
-        OutgoingLog, OutgoingMessage,
+        BatteryState, LogBody, LogLevel, LogType, MovementState, OutgoingCoords,
+        OutgoingInteraction, OutgoingLocation, OutgoingLog, OutgoingMessage,
     },
     segment::SegmentEstimator,
     state::TelemetryHub,
@@ -204,6 +204,24 @@ pub struct SendLogEventPayload {
 }
 
 #[derive(InputObject)]
+pub struct InteractionEventInput {
+    /// Client-generated unique session identifier (arbitrary string).
+    pub session_id: String,
+    /// Device identifier. Optional so events can be submitted anonymously.
+    pub device: Option<String>,
+    /// Unix timestamp in milliseconds.
+    pub timestamp: u64,
+    /// Arbitrary name of the user-driven interaction,
+    /// e.g. "app_launch", "tab_change", "tts_request", "feedback_success".
+    pub event_name: String,
+}
+
+#[derive(SimpleObject)]
+pub struct SendInteractionEventPayload {
+    pub session_id: String,
+}
+
+#[derive(InputObject)]
 pub struct CoordsInput {
     pub latitude: f64,
     pub longitude: f64,
@@ -299,6 +317,65 @@ impl MutationRoot {
 
         Ok(SendLogEventPayload {
             session_id: log.session_id,
+        })
+    }
+
+    /// Record a user-driven interaction identified by an arbitrary event
+    /// name (e.g. app launch, tab change, TTS request result). Unlike
+    /// sendLogEvent, which carries console.* output, this captures a named
+    /// user action. Requires the events token or the telemetry token. The
+    /// event is broadcast to WebSocket subscribers and persisted when a
+    /// database is configured.
+    async fn send_interaction_event(
+        &self,
+        ctx: &Context<'_>,
+        input: InteractionEventInput,
+    ) -> Result<SendInteractionEventPayload> {
+        let auth = ctx
+            .data::<MutationAuth>()
+            .map_err(|_| "auth context is missing")?;
+        if !auth.can_send_events {
+            return Err(
+                "unauthorized: a valid events or telemetry bearer token is required".into(),
+            );
+        }
+
+        if input.session_id.trim().is_empty() {
+            return Err("sessionId must not be empty".into());
+        }
+
+        if input.event_name.trim().is_empty() {
+            return Err("eventName must not be empty".into());
+        }
+
+        let hub = ctx
+            .data::<Arc<TelemetryHub>>()
+            .map_err(|_| "telemetry hub is not configured")?;
+        let storage = ctx
+            .data::<Storage>()
+            .map_err(|_| "storage is not configured")?;
+
+        let event = OutgoingInteraction {
+            id: Uuid::new_v4().to_string(),
+            session_id: input.session_id,
+            device: input.device,
+            timestamp: input.timestamp,
+            event_name: input.event_name,
+        };
+
+        match serde_json::to_string(&OutgoingMessage::Interaction(event.clone())) {
+            Ok(serialized) => hub.broadcast(serialized).await,
+            Err(err) => {
+                tracing::error!(?err, "failed to serialize interaction message");
+            }
+        }
+
+        if let Err(err) = storage.store_interaction(&event).await {
+            tracing::error!(?err, "failed to persist interaction event");
+        }
+
+        Ok(SendInteractionEventPayload {
+            session_id: event.session_id,
         })
     }
 
@@ -652,6 +729,110 @@ mod tests {
                         type: APP,
                         level: INFO,
                         message: "hi"
+                    }) { sessionId }
+                }"#,
+                OBSERVER,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(resp.errors[0].message.contains("unauthorized"));
+        assert!(hub.snapshot().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn send_interaction_event_broadcasts_event_name() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(
+                r#"mutation {
+                    sendInteractionEvent(input: {
+                        sessionId: "sess-1",
+                        device: "dev",
+                        timestamp: 1706000000000,
+                        eventName: "tts_request"
+                    }) { sessionId }
+                }"#,
+                EVENTS_ONLY,
+            ))
+            .await;
+
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["sendInteractionEvent"]["sessionId"], "sess-1");
+
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&snapshot[0]).unwrap();
+        assert_eq!(v["type"], "interaction");
+        assert_eq!(v["event_name"], "tts_request");
+        assert_eq!(v["session_id"], "sess-1");
+        assert!(!v["id"].as_str().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn send_interaction_event_accepts_anonymous_device() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(
+                r#"mutation {
+                    sendInteractionEvent(input: {
+                        sessionId: "sess-1",
+                        timestamp: 1,
+                        eventName: "app_launch"
+                    }) { sessionId }
+                }"#,
+                TELEMETRY,
+            ))
+            .await;
+
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&snapshot[0]).unwrap();
+        assert!(v["device"].is_null());
+        assert_eq!(v["event_name"], "app_launch");
+    }
+
+    #[tokio::test]
+    async fn send_interaction_event_rejects_empty_event_name() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(
+                r#"mutation {
+                    sendInteractionEvent(input: {
+                        sessionId: "sess-1",
+                        timestamp: 1,
+                        eventName: "  "
+                    }) { sessionId }
+                }"#,
+                EVENTS_ONLY,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(resp.errors[0].message.contains("eventName"));
+        assert!(hub.snapshot().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn send_interaction_event_rejects_observer_scope() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(
+                r#"mutation {
+                    sendInteractionEvent(input: {
+                        sessionId: "sess-1",
+                        timestamp: 1,
+                        eventName: "app_launch"
                     }) { sessionId }
                 }"#,
                 OBSERVER,
