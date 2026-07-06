@@ -115,6 +115,9 @@ mutation {
   sendLogEvent(input: {
     sessionId: "d0f7..."   # client-generated unique session identifier
     device: "device-001"   # optional — omit to submit anonymously
+    appVersion: "1.2.3"
+    platform: IOS      # IOS | ANDROID | MACOS | UNKNOWN
+    channel: PRODUCTION    # PRODUCTION | CANARY
     timestamp: 1706000000000
     type: APP          # SYSTEM | APP | CLIENT
     level: INFO        # DEBUG | INFO | WARN | ERROR
@@ -136,13 +139,19 @@ mutation {
   sendInteractionEvent(input: {
     sessionId: "d0f7..."   # client-generated unique session identifier
     device: "device-001"   # optional — omit to submit anonymously
+    appVersion: "1.2.3"
+    platform: IOS      # IOS | ANDROID | MACOS | UNKNOWN
+    channel: PRODUCTION    # PRODUCTION | CANARY
     timestamp: 1706000000000
-    eventName: "tts_request"   # arbitrary event name
+    eventName: "tab_change"    # arbitrary event name
+    properties: { tab: "map", index: 2, pinned: true }   # optional flat map
   }) {
     sessionId
   }
 }
 ```
+
+`properties` is an optional flat object — the TS equivalent is `Record<string, string | number | boolean | null>`. Nested objects and arrays are rejected.
 
 #### `sendLocation` — Submit a location update
 
@@ -253,6 +262,9 @@ Once connected, the server broadcasts `location_update`, `log` and `interaction`
   "type": "log",
   "session_id": "client-generated-session-id",
   "device": "device-id",
+  "app_version": "1.2.3",
+  "platform": "ios | android | macos | unknown",
+  "channel": "production | canary",
   "timestamp": 1234567890,
   "log": {
     "type": "system | app | client",
@@ -272,8 +284,12 @@ Once connected, the server broadcasts `location_update`, `log` and `interaction`
   "type": "interaction",
   "session_id": "client-generated-session-id",
   "device": "device-id",
+  "app_version": "1.2.3",
+  "platform": "ios | android | macos | unknown",
+  "channel": "production | canary",
   "timestamp": 1234567890,
-  "event_name": "tts_request"
+  "event_name": "tab_change",
+  "properties": { "tab": "map", "index": 2, "pinned": true }
 }
 ```
 
@@ -298,8 +314,8 @@ When `database_url` / `DATABASE_URL` is provided, the server connects to Postgre
 | Table | Key columns |
 |---|---|
 | `location_logs` | `id`, `session_id`, `device`, `state`, `station_id`, `line_id`, `segment_id`, `from_station_id`, `to_station_id`, `latitude`, `longitude`, `accuracy`, `speed`, `battery_level`, `battery_state`, `timestamp`, `recorded_at` |
-| `log_events` | `id`, `session_id`, `device`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at` |
-| `interaction_events` | `id`, `session_id`, `device`, `event_name`, `timestamp`, `recorded_at` |
+| `log_events` | `id`, `session_id`, `device`, `app_version`, `platform`, `channel`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at` |
+| `interaction_events` | `id`, `session_id`, `device`, `app_version`, `platform`, `channel`, `properties` (JSONB), `event_name`, `timestamp`, `recorded_at` |
 
 Without a `database_url` the server still accepts WebSocket traffic but does not persist messages.
 

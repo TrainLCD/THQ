@@ -120,6 +120,9 @@ impl Storage {
                 id TEXT PRIMARY KEY,
                 session_id TEXT,
                 device TEXT,
+                app_version TEXT,
+                platform TEXT,
+                channel TEXT,
                 log_type TEXT NOT NULL,
                 log_level TEXT NOT NULL,
                 message TEXT NOT NULL,
@@ -137,6 +140,10 @@ impl Storage {
                 id TEXT PRIMARY KEY,
                 session_id TEXT,
                 device TEXT,
+                app_version TEXT,
+                platform TEXT,
+                channel TEXT,
+                properties JSONB,
                 event_name TEXT NOT NULL,
                 timestamp BIGINT NOT NULL,
                 recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -145,6 +152,19 @@ impl Storage {
         )
         .execute(pool)
         .await?;
+
+        sqlx::query("ALTER TABLE interaction_events ADD COLUMN IF NOT EXISTS app_version TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE interaction_events ADD COLUMN IF NOT EXISTS platform TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE interaction_events ADD COLUMN IF NOT EXISTS channel TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE interaction_events ADD COLUMN IF NOT EXISTS properties JSONB;")
+            .execute(pool)
+            .await?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_location_logs_device ON location_logs (device);",
@@ -164,6 +184,15 @@ impl Storage {
             .execute(pool)
             .await?;
         sqlx::query("ALTER TABLE log_events ADD COLUMN IF NOT EXISTS session_id TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE log_events ADD COLUMN IF NOT EXISTS app_version TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE log_events ADD COLUMN IF NOT EXISTS platform TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE log_events ADD COLUMN IF NOT EXISTS channel TEXT;")
             .execute(pool)
             .await?;
 
@@ -227,11 +256,14 @@ impl Storage {
         let ts = i64::try_from(log.timestamp).unwrap_or(i64::MAX);
 
         sqlx::query(
-            "INSERT INTO log_events (id, session_id, device, log_type, log_level, message, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO log_events (id, session_id, device, app_version, platform, channel, log_type, log_level, message, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&log.id)
         .bind(&log.session_id)
         .bind(&log.device)
+        .bind(&log.app_version)
+        .bind(log.platform.as_str())
+        .bind(log.channel.as_str())
         .bind(log_type_str(&log.log.r#type))
         .bind(log_level_str(&log.log.level))
         .bind(&log.log.message)
@@ -250,12 +282,21 @@ impl Storage {
 
         let ts = i64::try_from(event.timestamp).unwrap_or(i64::MAX);
 
+        let properties = event
+            .properties
+            .as_ref()
+            .and_then(|p| serde_json::to_value(p).ok());
+
         sqlx::query(
-            "INSERT INTO interaction_events (id, session_id, device, event_name, timestamp) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO interaction_events (id, session_id, device, app_version, platform, channel, properties, event_name, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&event.id)
         .bind(&event.session_id)
         .bind(&event.device)
+        .bind(&event.app_version)
+        .bind(event.platform.as_str())
+        .bind(event.channel.as_str())
+        .bind(properties)
         .bind(&event.event_name)
         .bind(ts)
         .execute(pool)

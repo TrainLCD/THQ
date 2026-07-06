@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        BatteryState, LogBody, LogLevel, LogType, MovementState, OutgoingCoords,
-        OutgoingInteraction, OutgoingLocation, OutgoingLog, OutgoingMessage,
+        BatteryState, Channel, LogBody, LogLevel, LogType, MovementState, OutgoingCoords,
+        OutgoingInteraction, OutgoingLocation, OutgoingLog, OutgoingMessage, Platform, Properties,
     },
     segment::SegmentEstimator,
     state::TelemetryHub,
@@ -190,6 +190,10 @@ pub struct LogEventInput {
     pub session_id: String,
     /// Device identifier. Optional so events can be submitted anonymously.
     pub device: Option<String>,
+    /// Application version string (e.g. "1.2.3").
+    pub app_version: String,
+    pub platform: Platform,
+    pub channel: Channel,
     /// Unix timestamp in milliseconds.
     pub timestamp: u64,
     #[graphql(name = "type")]
@@ -209,11 +213,19 @@ pub struct InteractionEventInput {
     pub session_id: String,
     /// Device identifier. Optional so events can be submitted anonymously.
     pub device: Option<String>,
+    /// Application version string (e.g. "1.2.3").
+    pub app_version: String,
+    pub platform: Platform,
+    pub channel: Channel,
     /// Unix timestamp in milliseconds.
     pub timestamp: u64,
     /// Arbitrary name of the user-driven interaction,
     /// e.g. "app_launch", "tab_change", "tts_request", "feedback_success".
     pub event_name: String,
+    /// Optional flat map of extra attributes describing the interaction.
+    /// Values must be string, number, boolean or null; nested objects and
+    /// arrays are rejected.
+    pub properties: Option<Properties>,
 }
 
 #[derive(SimpleObject)]
@@ -281,6 +293,10 @@ impl MutationRoot {
             return Err("sessionId must not be empty".into());
         }
 
+        if input.app_version.trim().is_empty() {
+            return Err("appVersion must not be empty".into());
+        }
+
         if input.message.trim().is_empty() {
             return Err("message must not be empty".into());
         }
@@ -296,6 +312,9 @@ impl MutationRoot {
             id: Uuid::new_v4().to_string(),
             session_id: input.session_id,
             device: input.device,
+            app_version: input.app_version,
+            platform: input.platform,
+            channel: input.channel,
             timestamp: input.timestamp,
             log: LogBody {
                 r#type: input.log_type,
@@ -344,6 +363,10 @@ impl MutationRoot {
             return Err("sessionId must not be empty".into());
         }
 
+        if input.app_version.trim().is_empty() {
+            return Err("appVersion must not be empty".into());
+        }
+
         if input.event_name.trim().is_empty() {
             return Err("eventName must not be empty".into());
         }
@@ -359,8 +382,12 @@ impl MutationRoot {
             id: Uuid::new_v4().to_string(),
             session_id: input.session_id,
             device: input.device,
+            app_version: input.app_version,
+            platform: input.platform,
+            channel: input.channel,
             timestamp: input.timestamp,
             event_name: input.event_name,
+            properties: input.properties,
         };
 
         match serde_json::to_string(&OutgoingMessage::Interaction(event.clone())) {
@@ -581,6 +608,9 @@ mod tests {
                 r#"mutation {
                     sendLogEvent(input: {
                         sessionId: "sess-abc",
+                        appVersion: "1.2.3",
+                        platform: IOS,
+                        channel: PRODUCTION,
                         device: "dev",
                         timestamp: 1706000000000,
                         type: APP,
@@ -603,8 +633,39 @@ mod tests {
         assert_eq!(v["session_id"], "sess-abc");
         // the event ID is always generated server-side
         assert!(!v["id"].as_str().unwrap().is_empty());
+        assert_eq!(v["app_version"], "1.2.3");
+        assert_eq!(v["platform"], "ios");
+        assert_eq!(v["channel"], "production");
         assert_eq!(v["log"]["message"], "hello");
         assert_eq!(v["timestamp"], 1706000000000u64);
+    }
+
+    #[tokio::test]
+    async fn send_log_event_rejects_empty_app_version() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(
+                r#"mutation {
+                    sendLogEvent(input: {
+                        sessionId: "sess-1",
+                        appVersion: "  ",
+                        platform: ANDROID,
+                        channel: CANARY,
+                        timestamp: 1,
+                        type: APP,
+                        level: INFO,
+                        message: "hi"
+                    }) { sessionId }
+                }"#,
+                EVENTS_ONLY,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(resp.errors[0].message.contains("appVersion"));
+        assert!(hub.snapshot().await.is_empty());
     }
 
     #[tokio::test]
@@ -617,6 +678,9 @@ mod tests {
                 r#"mutation {
                     sendLogEvent(input: {
                         sessionId: "sess-anon",
+                        appVersion: "1.2.3",
+                        platform: IOS,
+                        channel: PRODUCTION,
                         timestamp: 1,
                         type: APP,
                         level: INFO,
@@ -672,6 +736,9 @@ mod tests {
                 r#"mutation {
                     sendLogEvent(input: {
                         sessionId: "   ",
+                        appVersion: "1.2.3",
+                        platform: IOS,
+                        channel: PRODUCTION,
                         device: "dev",
                         timestamp: 1,
                         type: SYSTEM,
@@ -698,6 +765,9 @@ mod tests {
                 r#"mutation {
                     sendLogEvent(input: {
                         sessionId: "sess-1",
+                        appVersion: "1.2.3",
+                        platform: IOS,
+                        channel: PRODUCTION,
                         device: "dev",
                         timestamp: 1,
                         type: APP,
@@ -724,6 +794,9 @@ mod tests {
                 r#"mutation {
                     sendLogEvent(input: {
                         sessionId: "sess-1",
+                        appVersion: "1.2.3",
+                        platform: IOS,
+                        channel: PRODUCTION,
                         device: "dev",
                         timestamp: 1,
                         type: APP,
@@ -750,6 +823,9 @@ mod tests {
                 r#"mutation {
                     sendInteractionEvent(input: {
                         sessionId: "sess-1",
+                        appVersion: "1.2.3",
+                        platform: IOS,
+                        channel: PRODUCTION,
                         device: "dev",
                         timestamp: 1706000000000,
                         eventName: "tts_request"
@@ -770,6 +846,72 @@ mod tests {
         assert_eq!(v["event_name"], "tts_request");
         assert_eq!(v["session_id"], "sess-1");
         assert!(!v["id"].as_str().unwrap().is_empty());
+        assert_eq!(v["app_version"], "1.2.3");
+        assert_eq!(v["platform"], "ios");
+        assert_eq!(v["channel"], "production");
+    }
+
+    #[tokio::test]
+    async fn send_interaction_event_records_flat_properties() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(
+                r#"mutation {
+                    sendInteractionEvent(input: {
+                        sessionId: "sess-1",
+                        appVersion: "1.2.3",
+                        platform: IOS,
+                        channel: PRODUCTION,
+                        timestamp: 1,
+                        eventName: "tab_change",
+                        properties: { tab: "map", index: 2, pinned: true, note: null }
+                    }) { sessionId }
+                }"#,
+                EVENTS_ONLY,
+            ))
+            .await;
+
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&snapshot[0]).unwrap();
+        assert_eq!(v["properties"]["tab"], "map");
+        assert_eq!(v["properties"]["index"], 2);
+        assert_eq!(v["properties"]["pinned"], true);
+        assert!(v["properties"]["note"].is_null());
+    }
+
+    #[tokio::test]
+    async fn send_interaction_event_rejects_nested_properties() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        for bad in [r#"{ nested: { a: 1 } }"#, r#"{ list: [1, 2] }"#] {
+            let resp = schema
+                .execute(request(
+                    &format!(
+                        r#"mutation {{
+                            sendInteractionEvent(input: {{
+                                sessionId: "sess-1",
+                                appVersion: "1.2.3",
+                                platform: IOS,
+                                channel: PRODUCTION,
+                                timestamp: 1,
+                                eventName: "tab_change",
+                                properties: {bad}
+                            }}) {{ sessionId }}
+                        }}"#
+                    ),
+                    EVENTS_ONLY,
+                ))
+                .await;
+
+            assert!(!resp.errors.is_empty(), "expected rejection for {bad}");
+        }
+
+        assert!(hub.snapshot().await.is_empty());
     }
 
     #[tokio::test]
@@ -782,6 +924,9 @@ mod tests {
                 r#"mutation {
                     sendInteractionEvent(input: {
                         sessionId: "sess-1",
+                        appVersion: "1.2.3",
+                        platform: IOS,
+                        channel: PRODUCTION,
                         timestamp: 1,
                         eventName: "app_launch"
                     }) { sessionId }
@@ -808,6 +953,9 @@ mod tests {
                 r#"mutation {
                     sendInteractionEvent(input: {
                         sessionId: "sess-1",
+                        appVersion: "1.2.3",
+                        platform: IOS,
+                        channel: PRODUCTION,
                         timestamp: 1,
                         eventName: "  "
                     }) { sessionId }
@@ -831,6 +979,9 @@ mod tests {
                 r#"mutation {
                     sendInteractionEvent(input: {
                         sessionId: "sess-1",
+                        appVersion: "1.2.3",
+                        platform: IOS,
+                        channel: PRODUCTION,
                         timestamp: 1,
                         eventName: "app_launch"
                     }) { sessionId }

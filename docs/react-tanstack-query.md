@@ -192,6 +192,9 @@ const SEND_LOG_EVENT = /* GraphQL */ `
 export interface LogEventInput {
   sessionId: string; // 必須。クライアント側で生成した一意な文字列(後述)
   device?: string; // 匿名性確保のため省略可。省略時は null として配信・保存される
+  appVersion: string; // 必須。アプリのバージョン文字列(空はサーバーが拒否)
+  platform: "IOS" | "ANDROID" | "MACOS" | "UNKNOWN"; // 必須
+  channel: "PRODUCTION" | "CANARY"; // 必須
   timestamp: number; // Unix ミリ秒 (Date.now())
   type: "SYSTEM" | "APP" | "CLIENT";
   level: "DEBUG" | "INFO" | "WARN" | "ERROR";
@@ -214,6 +217,9 @@ const sendLog = useSendLogEvent(eventsToken);
 sendLog.mutate({
   sessionId,
   device: "device-001",
+  appVersion: "1.2.3",
+  platform: "IOS",
+  channel: "PRODUCTION",
   timestamp: Date.now(),
   type: "APP",
   level: "INFO",
@@ -226,6 +232,9 @@ sendLog.mutate({
 ```ts
 sendLog.mutate({
   sessionId,
+  appVersion: "1.2.3",
+  platform: "IOS",
+  channel: "PRODUCTION",
   timestamp: Date.now(),
   type: "APP",
   level: "INFO",
@@ -277,8 +286,12 @@ const SEND_INTERACTION_EVENT = /* GraphQL */ `
 export interface InteractionEventInput {
   sessionId: string; // 必須。クライアント側で生成した一意な文字列
   device?: string; // 匿名性確保のため省略可
+  appVersion: string; // 必須。アプリのバージョン文字列(空はサーバーが拒否)
+  platform: "IOS" | "ANDROID" | "MACOS" | "UNKNOWN"; // 必須
+  channel: "PRODUCTION" | "CANARY"; // 必須
   timestamp: number; // Unix ミリ秒 (Date.now())
   eventName: string; // 任意のイベント名。空文字・空白のみはサーバーが拒否
+  properties?: Record<string, string | number | boolean | null>; // 省略可(後述)
 }
 
 export function useSendInteractionEvent(token: string) {
@@ -295,18 +308,38 @@ export function useSendInteractionEvent(token: string) {
 
 使用例:
 
+`properties` はイベントに付随する属性を格納するフラットなオブジェクトです。値に使えるのは文字列・数値・真偽値・null のみで、ネストしたオブジェクトや配列はサーバーが拒否します(GraphQL 上はカスタムスカラー `Properties`)。
+
 ```tsx
 const sendInteraction = useSendInteractionEvent(eventsToken);
 
+// アプリ全体で共通の属性はラップしておくと便利
+const track = (
+  eventName: string,
+  properties?: Record<string, string | number | boolean | null>,
+) =>
+  sendInteraction.mutate({
+    sessionId,
+    appVersion: "1.2.3",
+    platform: "IOS",
+    channel: "PRODUCTION",
+    timestamp: Date.now(),
+    eventName,
+    properties,
+  });
+
 // アプリ起動時
-sendInteraction.mutate({ sessionId, timestamp: Date.now(), eventName: "app_launch" });
+track("app_launch");
+
+// タブ移動(付随情報は properties で)
+track("tab_change", { tab: "map", index: 2 });
 
 // TTS リクエストの結果
 try {
   await requestTts(text);
-  sendInteraction.mutate({ sessionId, timestamp: Date.now(), eventName: "tts_success" });
-} catch {
-  sendInteraction.mutate({ sessionId, timestamp: Date.now(), eventName: "tts_failure" });
+  track("tts_success");
+} catch (err) {
+  track("tts_failure", { reason: String(err) });
 }
 ```
 

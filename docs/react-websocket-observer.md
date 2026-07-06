@@ -78,6 +78,9 @@ const ws = new WebSocket("wss://thq.example.com/ws", [
   "id": "uuid",
   "session_id": "client-generated-session-id",
   "device": "device-001",
+  "app_version": "1.2.3",
+  "platform": "ios | android | macos | unknown",
+  "channel": "production | canary",
   "timestamp": 1706000000000,
   "log": { "type": "system | app | client", "level": "debug | info | warn | error", "message": "..." }
 }
@@ -91,8 +94,12 @@ const ws = new WebSocket("wss://thq.example.com/ws", [
   "id": "uuid",
   "session_id": "client-generated-session-id",
   "device": "device-001",
+  "app_version": "1.2.3",
+  "platform": "ios | android | macos | unknown",
+  "channel": "production | canary",
   "timestamp": 1706000000000,
-  "event_name": "tts_request"
+  "event_name": "tab_change",
+  "properties": { "tab": "map", "index": 2, "pinned": true }
 }
 ```
 
@@ -145,6 +152,9 @@ export interface LogEvent {
   id: string; // サーバー採番のイベント ID(重複排除に使える)
   session_id: string; // クライアント側で生成されたセッション ID
   device: string | null; // 匿名送信されたイベントは null
+  app_version: string;
+  platform: "ios" | "android" | "macos" | "unknown";
+  channel: "production" | "canary";
   timestamp: number;
   log: {
     type: "system" | "app" | "client";
@@ -158,8 +168,12 @@ export interface InteractionEvent {
   id: string; // サーバー採番のイベント ID(重複排除に使える)
   session_id: string; // クライアント側で生成されたセッション ID
   device: string | null; // 匿名送信されたイベントは null
+  app_version: string;
+  platform: "ios" | "android" | "macos" | "unknown";
+  channel: "production" | "canary";
   timestamp: number;
   event_name: string; // 例: "app_launch", "tts_request"
+  properties: Record<string, string | number | boolean | null> | null; // 付随情報(フラットなオブジェクトのみ)
 }
 
 export type TelemetryEvent = LocationUpdateEvent | LogEvent | InteractionEvent;

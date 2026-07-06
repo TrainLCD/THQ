@@ -501,6 +501,9 @@ mod tests {
             r#"mutation {
                 sendLogEvent(input: {
                     sessionId: "sess-1",
+                    appVersion: "1.2.3",
+                    platform: IOS,
+                    channel: PRODUCTION,
                     device: "test-device",
                     timestamp: 1706000000000,
                     type: APP,

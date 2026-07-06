@@ -1,6 +1,32 @@
+use std::collections::HashMap;
+
 use async_graphql::Enum;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
+
+/// Value type allowed in event properties.
+/// TS equivalent: `string | number | boolean | null`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PropertyValue {
+    Null,
+    Bool(bool),
+    Number(serde_json::Number),
+    String(String),
+}
+
+/// Flat property map. Nested objects and arrays are rejected at
+/// deserialization because PropertyValue has no variant for them.
+/// TS equivalent: `Record<string, string | number | boolean | null>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Properties(pub HashMap<String, PropertyValue>);
+
+async_graphql::scalar!(
+    Properties,
+    "Properties",
+    "A flat JSON object whose values are string, number, boolean or null \
+     (no nested objects or arrays), i.e. Record<string, string | number | boolean | null>."
+);
 
 #[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, PartialEq, Eq, Enum)]
 #[repr(u8)]
@@ -27,6 +53,42 @@ impl MovementState {
             MovementState::Approaching => "approaching",
             MovementState::Passing => "passing",
             MovementState::Moving => "moving",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum Platform {
+    Ios,
+    Android,
+    Macos,
+    Unknown,
+}
+
+impl Platform {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Platform::Ios => "ios",
+            Platform::Android => "android",
+            Platform::Macos => "macos",
+            Platform::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum Channel {
+    Production,
+    Canary,
+}
+
+impl Channel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Channel::Production => "production",
+            Channel::Canary => "canary",
         }
     }
 }
@@ -127,6 +189,9 @@ pub struct OutgoingLog {
     pub session_id: String,
     /// None when the sender chose to stay anonymous.
     pub device: Option<String>,
+    pub app_version: String,
+    pub platform: Platform,
+    pub channel: Channel,
     pub timestamp: u64,
     pub log: LogBody,
 }
@@ -140,8 +205,13 @@ pub struct OutgoingInteraction {
     pub session_id: String,
     /// None when the sender chose to stay anonymous.
     pub device: Option<String>,
+    pub app_version: String,
+    pub platform: Platform,
+    pub channel: Channel,
     pub timestamp: u64,
     pub event_name: String,
+    /// Optional flat map of extra attributes describing the interaction.
+    pub properties: Option<Properties>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -183,6 +253,9 @@ mod tests {
             id: "id1".into(),
             session_id: "sess-1".into(),
             device: Some("dev".into()),
+            app_version: "1.2.3".into(),
+            platform: Platform::Ios,
+            channel: Channel::Production,
             timestamp: 42,
             log: LogBody {
                 r#type: LogType::App,
@@ -204,14 +277,37 @@ mod tests {
             id: "id1".into(),
             session_id: "sess-1".into(),
             device: None,
+            app_version: "1.2.3".into(),
+            platform: Platform::Android,
+            channel: Channel::Canary,
             timestamp: 42,
             event_name: "app_launch".into(),
+            properties: Some(Properties(HashMap::from([
+                ("tab".to_string(), PropertyValue::String("map".into())),
+                ("count".to_string(), PropertyValue::Number(3.into())),
+                ("active".to_string(), PropertyValue::Bool(true)),
+                ("note".to_string(), PropertyValue::Null),
+            ]))),
         });
 
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "interaction");
         assert_eq!(json["event_name"], "app_launch");
         assert!(json["device"].is_null());
+        assert_eq!(json["app_version"], "1.2.3");
+        assert_eq!(json["platform"], "android");
+        assert_eq!(json["channel"], "canary");
+        assert_eq!(json["properties"]["tab"], "map");
+        assert_eq!(json["properties"]["count"], 3);
+        assert_eq!(json["properties"]["active"], true);
+        assert!(json["properties"]["note"].is_null());
+    }
+
+    #[test]
+    fn property_value_rejects_nested_structures() {
+        assert!(serde_json::from_str::<Properties>(r#"{"tab":"map","count":1}"#).is_ok());
+        assert!(serde_json::from_str::<Properties>(r#"{"nested":{"a":1}}"#).is_err());
+        assert!(serde_json::from_str::<Properties>(r#"{"list":[1,2]}"#).is_err());
     }
 
     #[test]
