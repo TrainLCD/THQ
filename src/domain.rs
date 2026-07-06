@@ -96,6 +96,8 @@ pub enum OutgoingMessage {
 #[derive(Debug, Clone, Serialize)]
 pub struct OutgoingLocation {
     pub id: String,
+    /// Client-generated unique session identifier.
+    pub session_id: String,
     pub device: String,
     pub state: MovementState,
     pub station_id: Option<i32>,
@@ -120,7 +122,10 @@ pub struct OutgoingCoords {
 #[derive(Debug, Clone, Serialize)]
 pub struct OutgoingLog {
     pub id: String,
-    pub device: String,
+    /// Client-generated unique session identifier.
+    pub session_id: String,
+    /// None when the sender chose to stay anonymous.
+    pub device: Option<String>,
     pub timestamp: u64,
     pub log: LogBody,
 }
@@ -162,7 +167,8 @@ mod tests {
     fn outgoing_log_has_type_field() {
         let msg = OutgoingMessage::Log(OutgoingLog {
             id: "id1".into(),
-            device: "dev".into(),
+            session_id: "sess-1".into(),
+            device: Some("dev".into()),
             timestamp: 42,
             log: LogBody {
                 r#type: LogType::App,
@@ -182,6 +188,7 @@ mod tests {
     fn outgoing_location_has_type_field() {
         let msg = OutgoingMessage::LocationUpdate(OutgoingLocation {
             id: "id1".into(),
+            session_id: "sess-1".into(),
             device: "dev".into(),
             state: MovementState::Moving,
             station_id: Some(42),

@@ -183,14 +183,14 @@ import { gqlRequest } from "../lib/graphql";
 const SEND_LOG_EVENT = /* GraphQL */ `
   mutation SendLogEvent($input: LogEventInput!) {
     sendLogEvent(input: $input) {
-      id
+      sessionId
     }
   }
 `;
 
 export interface LogEventInput {
-  id?: string; // 省略時はサーバーが UUID を採番
-  device: string;
+  sessionId: string; // 必須。クライアント側で生成した一意な文字列(後述)
+  device?: string; // 匿名性確保のため省略可。省略時は null として配信・保存される
   timestamp: number; // Unix ミリ秒 (Date.now())
   type: "SYSTEM" | "APP" | "CLIENT";
   level: "DEBUG" | "INFO" | "WARN" | "ERROR";
@@ -200,7 +200,7 @@ export interface LogEventInput {
 export function useSendLogEvent(token: string) {
   return useMutation({
     mutationFn: (input: LogEventInput) =>
-      gqlRequest<{ sendLogEvent: { id: string } }>(SEND_LOG_EVENT, { input }, token),
+      gqlRequest<{ sendLogEvent: { sessionId: string } }>(SEND_LOG_EVENT, { input }, token),
   });
 }
 ```
@@ -211,6 +211,7 @@ export function useSendLogEvent(token: string) {
 const sendLog = useSendLogEvent(eventsToken);
 
 sendLog.mutate({
+  sessionId,
   device: "device-001",
   timestamp: Date.now(),
   type: "APP",
@@ -219,26 +220,34 @@ sendLog.mutate({
 });
 ```
 
-> `timestamp` はスキーマ上 `Int!` と表示されますが、サーバー内部は 64bit 整数のため `Date.now()` の値(約 1.7 兆)をそのまま渡して問題ありません。
-
-### 再送とべき等性
-
-`id` にクライアント側で生成した UUID を渡しておくと、同じ `id` の再送はサーバー側で無視(`ON CONFLICT DO NOTHING`)されるため、ネットワークエラー時のリトライを安全に行えます。
+端末を特定されたくない場合は `device` を省略して匿名で送信できます:
 
 ```ts
 sendLog.mutate({
-  id: crypto.randomUUID(),
-  device: "device-001",
+  sessionId,
   timestamp: Date.now(),
-  type: "CLIENT",
-  level: "ERROR",
-  message: "Connection lost",
+  type: "APP",
+  level: "INFO",
+  message: "started",
 });
 ```
 
+> `timestamp` はスキーマ上 `Int!` と表示されますが、サーバー内部は 64bit 整数のため `Date.now()` の値(約 1.7 兆)をそのまま渡して問題ありません。
+
+### sessionId の生成
+
+`sessionId` はクライアント側で生成する一意な文字列で、両 Mutation で必須です。セッション(アプリ起動)ごとに 1 回生成して、そのセッション中のすべての送信で使い回す想定です。
+
+```ts
+// アプリ起動時に 1 回だけ生成する
+const sessionId = crypto.randomUUID();
+```
+
+なお、イベント自体の ID はサーバー側で常に UUID が採番されます。クライアントから ID を指定することはできないため、送信リクエストの再送はそれぞれ別イベントとして記録される点に注意してください。
+
 ## Mutation: 位置情報送信(`sendLocation`)
 
-**遠隔測定用トークンのみ**が実行できます。イベント用トークンでは `unauthorized: a valid telemetry bearer token is required` エラーになります。
+**遠隔測定用トークンのみ**が実行できます。イベント用トークンでは `unauthorized: a valid telemetry bearer token is required` エラーになります。また、`sendLogEvent` と異なり **`device` は必須**です(位置情報は端末と紐付いていることが前提のため、匿名では送信できません)。
 
 ```ts
 // hooks/useSendLocation.ts
@@ -248,15 +257,15 @@ import { gqlRequest } from "../lib/graphql";
 const SEND_LOCATION = /* GraphQL */ `
   mutation SendLocation($input: LocationEventInput!) {
     sendLocation(input: $input) {
-      id
+      sessionId
       warning
     }
   }
 `;
 
 export interface LocationEventInput {
-  id?: string;
-  device: string;
+  sessionId: string; // 必須。クライアント側で生成した一意な文字列
+  device: string; // 必須(sendLogEvent と異なり省略不可)
   state: "ARRIVED" | "APPROACHING" | "PASSING" | "MOVING";
   stationId?: number; // ARRIVED / PASSING のときのみ有効。MOVING / APPROACHING では無視される
   lineId: number;
@@ -272,7 +281,7 @@ export interface LocationEventInput {
 }
 
 interface SendLocationData {
-  sendLocation: { id: string; warning: string | null };
+  sendLocation: { sessionId: string; warning: string | null };
 }
 
 export function useSendLocation(token: string) {
@@ -297,6 +306,7 @@ const sendLocation = useSendLocation(telemetryToken);
 useEffect(() => {
   const watchId = navigator.geolocation.watchPosition((pos) => {
     sendLocation.mutate({
+      sessionId,
       device: "device-001",
       state: "MOVING",
       lineId: 11302,

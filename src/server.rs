@@ -500,12 +500,13 @@ mod tests {
         graphql_request(
             r#"mutation {
                 sendLogEvent(input: {
+                    sessionId: "sess-1",
                     device: "test-device",
                     timestamp: 1706000000000,
                     type: APP,
                     level: INFO,
                     message: "Hello, world!"
-                }) { id }
+                }) { sessionId }
             }"#,
             auth_header,
         )
@@ -515,12 +516,13 @@ mod tests {
         graphql_request(
             r#"mutation {
                 sendLocation(input: {
+                    sessionId: "sess-1",
                     device: "test-device",
                     state: MOVING,
                     lineId: 1,
                     coords: { latitude: 35.6812, longitude: 139.7671 },
                     timestamp: 1706000000000
-                }) { id }
+                }) { sessionId }
             }"#,
             auth_header,
         )
@@ -603,12 +605,13 @@ mod tests {
 
         let v = body_json(response).await;
         assert!(v["errors"].is_null(), "errors: {}", v["errors"]);
-        assert!(v["data"]["sendLogEvent"]["id"].is_string());
+        assert_eq!(v["data"]["sendLogEvent"]["sessionId"], "sess-1");
 
         let snapshot = hub.snapshot().await;
         assert_eq!(snapshot.len(), 1);
         let msg: Value = serde_json::from_str(&snapshot[0]).unwrap();
         assert_eq!(msg["type"], "log");
+        assert_eq!(msg["session_id"], "sess-1");
         assert_eq!(msg["log"]["message"], "Hello, world!");
     }
 
@@ -687,12 +690,13 @@ mod tests {
             .unwrap();
         let v = body_json(response).await;
         assert!(v["errors"].is_null(), "errors: {}", v["errors"]);
-        assert!(v["data"]["sendLocation"]["id"].is_string());
+        assert_eq!(v["data"]["sendLocation"]["sessionId"], "sess-1");
 
         let snapshot = hub.snapshot().await;
         assert_eq!(snapshot.len(), 1);
         let msg: Value = serde_json::from_str(&snapshot[0]).unwrap();
         assert_eq!(msg["type"], "location_update");
+        assert_eq!(msg["session_id"], "sess-1");
     }
 
     #[tokio::test]

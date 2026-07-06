@@ -186,10 +186,10 @@ impl QueryRoot {
 
 #[derive(InputObject)]
 pub struct LogEventInput {
-    /// Optional custom ID. A random UUID is generated when omitted.
-    pub id: Option<String>,
-    /// Device identifier.
-    pub device: String,
+    /// Client-generated unique session identifier (arbitrary string).
+    pub session_id: String,
+    /// Device identifier. Optional so events can be submitted anonymously.
+    pub device: Option<String>,
     /// Unix timestamp in milliseconds.
     pub timestamp: u64,
     #[graphql(name = "type")]
@@ -200,7 +200,7 @@ pub struct LogEventInput {
 
 #[derive(SimpleObject)]
 pub struct SendLogEventPayload {
-    pub id: String,
+    pub session_id: String,
 }
 
 #[derive(InputObject)]
@@ -215,8 +215,8 @@ pub struct CoordsInput {
 
 #[derive(InputObject)]
 pub struct LocationEventInput {
-    /// Optional custom ID. A random UUID is generated when omitted.
-    pub id: Option<String>,
+    /// Client-generated unique session identifier (arbitrary string).
+    pub session_id: String,
     /// Device identifier.
     pub device: String,
     pub state: MovementState,
@@ -233,7 +233,7 @@ pub struct LocationEventInput {
 
 #[derive(SimpleObject)]
 pub struct SendLocationPayload {
-    pub id: String,
+    pub session_id: String,
     /// Set when the update was accepted with a caveat (e.g. bad accuracy).
     pub warning: Option<String>,
 }
@@ -259,6 +259,10 @@ impl MutationRoot {
             );
         }
 
+        if input.session_id.trim().is_empty() {
+            return Err("sessionId must not be empty".into());
+        }
+
         if input.message.trim().is_empty() {
             return Err("message must not be empty".into());
         }
@@ -270,9 +274,9 @@ impl MutationRoot {
             .data::<Storage>()
             .map_err(|_| "storage is not configured")?;
 
-        let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let log = OutgoingLog {
-            id: id.clone(),
+            id: Uuid::new_v4().to_string(),
+            session_id: input.session_id,
             device: input.device,
             timestamp: input.timestamp,
             log: LogBody {
@@ -293,7 +297,9 @@ impl MutationRoot {
             tracing::error!(?err, "failed to persist log event");
         }
 
-        Ok(SendLogEventPayload { id })
+        Ok(SendLogEventPayload {
+            session_id: log.session_id,
+        })
     }
 
     /// Submit a location update. Requires the telemetry token; the events
@@ -310,6 +316,10 @@ impl MutationRoot {
             .map_err(|_| "auth context is missing")?;
         if !auth.can_send_location {
             return Err("unauthorized: a valid telemetry bearer token is required".into());
+        }
+
+        if input.session_id.trim().is_empty() {
+            return Err("sessionId must not be empty".into());
         }
 
         if !input.coords.latitude.is_finite() || !input.coords.longitude.is_finite() {
@@ -365,9 +375,9 @@ impl MutationRoot {
             .data::<SegmentEstimator>()
             .map_err(|_| "segment estimator is not configured")?;
 
-        let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let loc = OutgoingLocation {
-            id: id.clone(),
+            id: Uuid::new_v4().to_string(),
+            session_id: input.session_id,
             device: input.device,
             state: input.state,
             station_id,
@@ -409,7 +419,10 @@ impl MutationRoot {
                 )
             });
 
-        Ok(SendLocationPayload { id, warning })
+        Ok(SendLocationPayload {
+            session_id: loc.session_id,
+            warning,
+        })
     }
 }
 
@@ -470,18 +483,19 @@ mod tests {
         format!(
             r#"mutation {{
                 sendLocation(input: {{
+                    sessionId: "sess-1",
                     device: "dev",
                     state: {state},
                     lineId: 1,
                     coords: {{ latitude: 35.6812, longitude: 139.7671{extra} }},
                     timestamp: 1706000000000
-                }}) {{ id warning }}
+                }}) {{ sessionId warning }}
             }}"#
         )
     }
 
     #[tokio::test]
-    async fn send_log_event_broadcasts_and_returns_id() {
+    async fn send_log_event_broadcasts_and_returns_session_id() {
         let hub = Arc::new(TelemetryHub::new(10));
         let schema = test_schema(hub.clone());
 
@@ -489,13 +503,13 @@ mod tests {
             .execute(request(
                 r#"mutation {
                     sendLogEvent(input: {
-                        id: "custom-id-123",
+                        sessionId: "sess-abc",
                         device: "dev",
                         timestamp: 1706000000000,
                         type: APP,
                         level: INFO,
                         message: "hello"
-                    }) { id }
+                    }) { sessionId }
                 }"#,
                 EVENTS_ONLY,
             ))
@@ -503,39 +517,98 @@ mod tests {
 
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
         let data = resp.data.into_json().unwrap();
-        assert_eq!(data["sendLogEvent"]["id"], "custom-id-123");
+        assert_eq!(data["sendLogEvent"]["sessionId"], "sess-abc");
 
         let snapshot = hub.snapshot().await;
         assert_eq!(snapshot.len(), 1);
         let v: serde_json::Value = serde_json::from_str(&snapshot[0]).unwrap();
         assert_eq!(v["type"], "log");
+        assert_eq!(v["session_id"], "sess-abc");
+        // the event ID is always generated server-side
+        assert!(!v["id"].as_str().unwrap().is_empty());
         assert_eq!(v["log"]["message"], "hello");
         assert_eq!(v["timestamp"], 1706000000000u64);
     }
 
     #[tokio::test]
-    async fn send_log_event_generates_id_when_omitted() {
+    async fn send_log_event_accepts_anonymous_device() {
         let hub = Arc::new(TelemetryHub::new(10));
-        let schema = test_schema(hub);
+        let schema = test_schema(hub.clone());
 
         let resp = schema
             .execute(request(
                 r#"mutation {
                     sendLogEvent(input: {
-                        device: "dev",
+                        sessionId: "sess-anon",
                         timestamp: 1,
-                        type: SYSTEM,
-                        level: WARN,
-                        message: "hi"
-                    }) { id }
+                        type: APP,
+                        level: INFO,
+                        message: "anonymous hello"
+                    }) { sessionId }
+                }"#,
+                EVENTS_ONLY,
+            ))
+            .await;
+
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&snapshot[0]).unwrap();
+        assert!(v["device"].is_null());
+        assert_eq!(v["log"]["message"], "anonymous hello");
+    }
+
+    #[tokio::test]
+    async fn send_location_requires_device() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(
+                r#"mutation {
+                    sendLocation(input: {
+                        sessionId: "sess-1",
+                        state: MOVING,
+                        lineId: 1,
+                        coords: { latitude: 35.6812, longitude: 139.7671 },
+                        timestamp: 1
+                    }) { sessionId }
                 }"#,
                 TELEMETRY,
             ))
             .await;
 
-        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
-        let data = resp.data.into_json().unwrap();
-        assert!(!data["sendLogEvent"]["id"].as_str().unwrap().is_empty());
+        // device is mandatory for positional data, so this fails schema validation
+        assert!(!resp.errors.is_empty());
+        assert!(resp.errors[0].message.contains("device"));
+        assert!(hub.snapshot().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn send_log_event_rejects_empty_session_id() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(
+                r#"mutation {
+                    sendLogEvent(input: {
+                        sessionId: "   ",
+                        device: "dev",
+                        timestamp: 1,
+                        type: SYSTEM,
+                        level: WARN,
+                        message: "hi"
+                    }) { sessionId }
+                }"#,
+                TELEMETRY,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(resp.errors[0].message.contains("sessionId"));
+        assert!(hub.snapshot().await.is_empty());
     }
 
     #[tokio::test]
@@ -547,12 +620,13 @@ mod tests {
             .execute(request(
                 r#"mutation {
                     sendLogEvent(input: {
+                        sessionId: "sess-1",
                         device: "dev",
                         timestamp: 1,
                         type: APP,
                         level: INFO,
                         message: "   "
-                    }) { id }
+                    }) { sessionId }
                 }"#,
                 EVENTS_ONLY,
             ))
@@ -572,12 +646,13 @@ mod tests {
             .execute(request(
                 r#"mutation {
                     sendLogEvent(input: {
+                        sessionId: "sess-1",
                         device: "dev",
                         timestamp: 1,
                         type: APP,
                         level: INFO,
                         message: "hi"
-                    }) { id }
+                    }) { sessionId }
                 }"#,
                 OBSERVER,
             ))
@@ -602,7 +677,7 @@ mod tests {
 
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
         let data = resp.data.into_json().unwrap();
-        assert!(!data["sendLocation"]["id"].as_str().unwrap().is_empty());
+        assert_eq!(data["sendLocation"]["sessionId"], "sess-1");
         assert!(data["sendLocation"]["warning"].is_null());
 
         let snapshot = hub.snapshot().await;
@@ -635,12 +710,13 @@ mod tests {
             .execute(request(
                 r#"mutation {
                     sendLocation(input: {
+                        sessionId: "sess-1",
                         device: "dev",
                         state: MOVING,
                         lineId: 1,
                         coords: { latitude: 91.0, longitude: 139.7671 },
                         timestamp: 1
-                    }) { id }
+                    }) { sessionId }
                 }"#,
                 TELEMETRY,
             ))
@@ -697,13 +773,14 @@ mod tests {
             .execute(request(
                 r#"mutation {
                     sendLocation(input: {
+                        sessionId: "sess-1",
                         device: "dev",
                         state: MOVING,
                         stationId: 42,
                         lineId: 1,
                         coords: { latitude: 35.6812, longitude: 139.7671 },
                         timestamp: 1
-                    }) { id }
+                    }) { sessionId }
                 }"#,
                 TELEMETRY,
             ))

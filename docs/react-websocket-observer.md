@@ -53,6 +53,7 @@ const ws = new WebSocket("wss://thq.example.com/ws", [
 {
   "type": "location_update",
   "id": "uuid",
+  "session_id": "client-generated-session-id",
   "device": "device-001",
   "state": "arrived | approaching | passing | moving",
   "station_id": 1130201,
@@ -75,11 +76,14 @@ const ws = new WebSocket("wss://thq.example.com/ws", [
 {
   "type": "log",
   "id": "uuid",
+  "session_id": "client-generated-session-id",
   "device": "device-001",
   "timestamp": 1706000000000,
   "log": { "type": "system | app | client", "level": "debug | info | warn | error", "message": "..." }
 }
 ```
+
+ログイベントは匿名で送信できるため、`device` が `null` の場合があります(`location_update` の `device` は常に非 null です)。
 
 **error** — プロトコルエラーの通知(不正な JSON を送った場合など)
 
@@ -103,7 +107,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 export interface LocationUpdateEvent {
   type: "location_update";
-  id: string;
+  id: string; // サーバー採番のイベント ID(重複排除に使える)
+  session_id: string; // クライアント側で生成されたセッション ID
   device: string;
   state: "arrived" | "approaching" | "passing" | "moving";
   station_id: number | null;
@@ -124,8 +129,9 @@ export interface LocationUpdateEvent {
 
 export interface LogEvent {
   type: "log";
-  id: string;
-  device: string;
+  id: string; // サーバー採番のイベント ID(重複排除に使える)
+  session_id: string; // クライアント側で生成されたセッション ID
+  device: string | null; // 匿名送信されたイベントは null
   timestamp: number;
   log: {
     type: "system" | "app" | "client";

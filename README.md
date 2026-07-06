@@ -113,24 +113,28 @@ Requires the events token or the telemetry token.
 ```graphql
 mutation {
   sendLogEvent(input: {
-    device: "device-001"
+    sessionId: "d0f7..."   # client-generated unique session identifier
+    device: "device-001"   # optional — omit to submit anonymously
     timestamp: 1706000000000
     type: APP          # SYSTEM | APP | CLIENT
     level: INFO        # DEBUG | INFO | WARN | ERROR
     message: "GPS signal acquired"
   }) {
-    id
+    sessionId
   }
 }
 ```
 
+`sessionId` is a mandatory, client-generated unique identifier (any string). Event IDs are always generated server-side. `device` is optional so that log events can be submitted anonymously; omitted values are broadcast and stored as `null`.
+
 #### `sendLocation` — Submit a location update
 
-Requires the telemetry token; the events token is deliberately not enough to publish positional data. The update is validated, annotated with segment information, broadcast to WebSocket subscribers, and persisted.
+Requires the telemetry token; the events token is deliberately not enough to publish positional data. Unlike `sendLogEvent`, `device` is mandatory here. The update is validated, annotated with segment information, broadcast to WebSocket subscribers, and persisted.
 
 ```graphql
 mutation {
   sendLocation(input: {
+    sessionId: "d0f7..."   # client-generated unique session identifier
     device: "device-001"
     state: MOVING      # ARRIVED | APPROACHING | PASSING | MOVING
     lineId: 11302
@@ -142,7 +146,7 @@ mutation {
     }
     timestamp: 1706000000000
   }) {
-    id
+    sessionId
     warning   # set when e.g. the reported accuracy exceeds 100 m
   }
 }
@@ -209,6 +213,7 @@ Once connected, the server broadcasts `location_update` and `log` messages in re
 {
   "id": "uuid",
   "type": "location_update",
+  "session_id": "client-generated-session-id",
   "device": "device-id",
   "state": "arrived | approaching | passing | moving",
   "station_id": 123,
@@ -229,6 +234,7 @@ Once connected, the server broadcasts `location_update` and `log` messages in re
 {
   "id": "uuid",
   "type": "log",
+  "session_id": "client-generated-session-id",
   "device": "device-id",
   "timestamp": 1234567890,
   "log": {
@@ -238,6 +244,8 @@ Once connected, the server broadcasts `location_update` and `log` messages in re
   }
 }
 ```
+
+`device` is `null` when the event was submitted anonymously.
 
 **error**
 
@@ -257,8 +265,8 @@ When `database_url` / `DATABASE_URL` is provided, the server connects to Postgre
 
 | Table | Key columns |
 |---|---|
-| `location_logs` | `id`, `device`, `state`, `station_id`, `line_id`, `segment_id`, `from_station_id`, `to_station_id`, `latitude`, `longitude`, `accuracy`, `speed`, `battery_level`, `battery_state`, `timestamp`, `recorded_at` |
-| `log_events` | `id`, `device`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at` |
+| `location_logs` | `id`, `session_id`, `device`, `state`, `station_id`, `line_id`, `segment_id`, `from_station_id`, `to_station_id`, `latitude`, `longitude`, `accuracy`, `speed`, `battery_level`, `battery_state`, `timestamp`, `recorded_at` |
+| `log_events` | `id`, `session_id`, `device`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at` |
 
 Without a `database_url` the server still accepts WebSocket traffic but does not persist messages.
 

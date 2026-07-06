@@ -59,6 +59,7 @@ impl Storage {
             r#"
             CREATE TABLE IF NOT EXISTS location_logs (
                 id TEXT PRIMARY KEY,
+                session_id TEXT,
                 device TEXT NOT NULL,
                 state TEXT NOT NULL,
                 station_id INTEGER,
@@ -108,12 +109,16 @@ impl Storage {
         sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS battery_state SMALLINT;")
             .execute(pool)
             .await?;
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS session_id TEXT;")
+            .execute(pool)
+            .await?;
 
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS log_events (
                 id TEXT PRIMARY KEY,
-                device TEXT NOT NULL,
+                session_id TEXT,
+                device TEXT,
                 log_type TEXT NOT NULL,
                 log_level TEXT NOT NULL,
                 message TEXT NOT NULL,
@@ -137,6 +142,15 @@ impl Storage {
         .execute(pool)
         .await?;
 
+        // Allow NULL in device column so log events can be submitted anonymously;
+        // idempotent on columns already nullable.
+        sqlx::query("ALTER TABLE log_events ALTER COLUMN device DROP NOT NULL;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE log_events ADD COLUMN IF NOT EXISTS session_id TEXT;")
+            .execute(pool)
+            .await?;
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_log_events_device ON log_events (device);")
             .execute(pool)
             .await?;
@@ -152,9 +166,10 @@ impl Storage {
         let ts = i64::try_from(loc.timestamp).unwrap_or(i64::MAX);
 
         sqlx::query(
-            "INSERT INTO location_logs (id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp, battery_level, battery_state) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO location_logs (id, session_id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp, battery_level, battery_state) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&loc.id)
+        .bind(&loc.session_id)
         .bind(&loc.device)
         .bind(movement_state_str(&loc.state))
         .bind(loc.station_id)
@@ -184,9 +199,10 @@ impl Storage {
         let ts = i64::try_from(log.timestamp).unwrap_or(i64::MAX);
 
         sqlx::query(
-            "INSERT INTO log_events (id, device, log_type, log_level, message, timestamp) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO log_events (id, session_id, device, log_type, log_level, message, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&log.id)
+        .bind(&log.session_id)
         .bind(&log.device)
         .bind(log_type_str(&log.log.r#type))
         .bind(log_level_str(&log.log.level))
