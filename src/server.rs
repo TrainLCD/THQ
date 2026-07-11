@@ -3,7 +3,6 @@ use std::{net::SocketAddr, sync::Arc};
 use subtle::ConstantTimeEq;
 
 use anyhow::Context;
-use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{
@@ -11,13 +10,12 @@ use axum::{
         ConnectInfo, State,
     },
     http::{header::AUTHORIZATION, header::SEC_WEBSOCKET_PROTOCOL, HeaderMap, StatusCode},
-    response::{Html, IntoResponse},
-    routing::get,
+    response::IntoResponse,
+    routing::{get, post},
     Router,
 };
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
-use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
@@ -38,7 +36,6 @@ struct AuthConfig {
     observer_token: Option<String>,
     events_token: Option<String>,
     telemetry_token: Option<String>,
-    required: bool,
 }
 
 #[derive(Clone)]
@@ -82,12 +79,6 @@ pub async fn run_server(config: Config) -> anyhow::Result<()> {
         tracing::info!("database_url not set; persistence is disabled");
     }
 
-    if !config.auth_required {
-        warn!(
-            "authentication is disabled; every client gets observer, events and telemetry access"
-        );
-    }
-
     let schema = build_schema(storage, hub.clone(), segmenter);
 
     let state = AppState {
@@ -96,7 +87,6 @@ pub async fn run_server(config: Config) -> anyhow::Result<()> {
             observer_token: config.observer_auth_token.clone(),
             events_token: config.events_auth_token.clone(),
             telemetry_token: config.telemetry_auth_token.clone(),
-            required: config.auth_required,
         },
         schema,
     };
@@ -105,7 +95,7 @@ pub async fn run_server(config: Config) -> anyhow::Result<()> {
         .route("/", get(ws_handler))
         .route("/ws", get(ws_handler))
         .route("/healthz", get(healthz))
-        .route("/graphql", get(graphql_playground).post(graphql_handler))
+        .route("/graphql", post(graphql_handler))
         .with_state(state);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
@@ -164,23 +154,10 @@ async fn graphql_handler(
     state.schema.execute(req).await.into()
 }
 
-async fn graphql_playground() -> impl IntoResponse {
-    Html(playground_source(
-        GraphQLPlaygroundConfig::new("/graphql").subscription_endpoint("/graphql"),
-    ))
-}
-
 /// Resolves the mutation scopes granted by the Authorization header.
 /// Queries stay open, so the result is carried into the GraphQL context
 /// instead of rejecting the request here.
 fn mutation_auth(headers: &HeaderMap, auth: &AuthConfig) -> MutationAuth {
-    if !auth.required {
-        return MutationAuth {
-            can_send_events: true,
-            can_send_location: true,
-        };
-    }
-
     let Some(token) = bearer_token(headers) else {
         return MutationAuth {
             can_send_events: false,
@@ -320,10 +297,6 @@ impl AuthError {
 /// WebSocket observation is granted by the observer token only; the events
 /// and telemetry tokens deliberately do not open the subscription channel.
 fn enforce_ws_auth(header: Option<&str>, auth: &AuthConfig) -> Result<(), AuthError> {
-    if !auth.required {
-        return Ok(());
-    }
-
     let raw = header.ok_or(AuthError::MissingHeader)?;
     let parsed = parse_protocol_header(raw);
 
@@ -446,21 +419,11 @@ mod tests {
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    fn open_auth() -> AuthConfig {
-        AuthConfig {
-            observer_token: None,
-            events_token: None,
-            telemetry_token: None,
-            required: false,
-        }
-    }
-
     fn scoped_auth() -> AuthConfig {
         AuthConfig {
             observer_token: Some("observer-secret".into()),
             events_token: Some("events-secret".into()),
             telemetry_token: Some("telemetry-secret".into()),
-            required: true,
         }
     }
 
@@ -598,27 +561,6 @@ mod tests {
     // GraphQL mutations over HTTP
 
     #[tokio::test]
-    async fn graphql_mutation_broadcasts_log_event_when_auth_disabled() {
-        let state = state_with_auth(open_auth());
-        let hub = state.hub.clone();
-        let app = graphql_router(state);
-
-        let response = app.oneshot(send_log_event_request(None)).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let v = body_json(response).await;
-        assert!(v["errors"].is_null(), "errors: {}", v["errors"]);
-        assert_eq!(v["data"]["sendLogEvent"]["sessionId"], "sess-1");
-
-        let snapshot = hub.snapshot().await;
-        assert_eq!(snapshot.len(), 1);
-        let msg: Value = serde_json::from_str(&snapshot[0]).unwrap();
-        assert_eq!(msg["type"], "log");
-        assert_eq!(msg["session_id"], "sess-1");
-        assert_eq!(msg["log"]["message"], "Hello, world!");
-    }
-
-    #[tokio::test]
     async fn log_event_rejects_missing_auth() {
         let state = state_with_auth(scoped_auth());
         let hub = state.hub.clone();
@@ -733,13 +675,6 @@ mod tests {
         let v = body_json(response).await;
         assert!(!v["errors"].is_null());
         assert!(hub.snapshot().await.is_empty());
-    }
-
-    #[test]
-    fn mutation_auth_grants_everything_when_disabled() {
-        let auth = mutation_auth(&HeaderMap::new(), &open_auth());
-        assert!(auth.can_send_events);
-        assert!(auth.can_send_location);
     }
 
     #[test]

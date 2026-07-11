@@ -4,7 +4,7 @@
 
 ## 前提
 
-thq-server の GraphQL API はエンドポイント `POST /graphql` で公開されています(Playground: `GET /graphql`)。
+thq-server の GraphQL API はエンドポイント `POST /graphql` で公開されています。
 
 | 操作 | 種別 | 認証 |
 |---|---|---|

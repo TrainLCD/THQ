@@ -53,7 +53,7 @@ Endpoints after startup:
 | Endpoint | URL |
 |---|---|
 | WebSocket | `ws://localhost:8080/ws` |
-| GraphQL Playground | `http://localhost:8080/graphql` |
+| GraphQL | `http://localhost:8080/graphql` (POST) |
 | Health check | `http://localhost:8080/healthz` |
 
 ## Configuration
@@ -68,7 +68,6 @@ database_url = "postgres://user:pass@localhost:5432/thq"
 observer_auth_token = "change-me-observer"
 events_auth_token = "change-me-events"
 telemetry_auth_token = "change-me-telemetry"
-auth_required = true
 ```
 
 | Key | Environment variable | Default | Description |
@@ -80,9 +79,6 @@ auth_required = true
 | `observer_auth_token` | `THQ_OBSERVER_AUTH_TOKEN` | — | Token for WebSocket observers |
 | `events_auth_token` | `THQ_EVENTS_AUTH_TOKEN` | — | Token allowed to send log events |
 | `telemetry_auth_token` | `THQ_TELEMETRY_AUTH_TOKEN` | — | Token allowed to send log events **and** location updates |
-| `auth_required` | `THQ_AUTH_REQUIRED` | `true`* | Require authentication |
-
-\* Defaults to `true` when any token is configured.
 
 ## Authentication
 
@@ -98,13 +94,13 @@ Three shared secrets grant exactly one role each:
 - **GraphQL mutations** — send the events or telemetry token via `Authorization: Bearer <token>`
 - **GraphQL queries** — no authentication (aggregated data only)
 
-Set `auth_required = false` to skip all authentication during local development.
+Authentication is always enforced. At least one token must be configured, or the server refuses to start.
 
 ## API
 
 ### GraphQL
 
-Endpoint: `POST /graphql` (Playground: `GET /graphql`)
+Endpoint: `POST /graphql`
 
 #### `sendLogEvent` — Submit a log event
 

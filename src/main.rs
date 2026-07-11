@@ -21,7 +21,6 @@ async fn main() -> anyhow::Result<()> {
         observer_auth_configured = config.observer_auth_token.is_some(),
         events_auth_configured = config.events_auth_token.is_some(),
         telemetry_auth_configured = config.telemetry_auth_token.is_some(),
-        auth_required = config.auth_required,
         "starting thq-server"
     );
     match server::run_server(config).await {
