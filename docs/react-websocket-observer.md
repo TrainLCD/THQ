@@ -181,6 +181,7 @@ export type TelemetryEvent = LocationUpdateEvent | LogEvent | InteractionEvent;
 const FEED_KEY = ["telemetryFeed"] as const;
 const MAX_EVENTS = 1000;
 const MAX_RETRIES = 10;
+const STABLE_CONNECTION_MS = 10_000; // これだけ安定接続できたらリトライ回数をリセット
 
 export function useTelemetryFeed(
   wsUrl: string,
@@ -192,6 +193,7 @@ export function useTelemetryFeed(
   useEffect(() => {
     let ws: WebSocket | null = null;
     let retryTimer: ReturnType<typeof setTimeout>;
+    let stableTimer: ReturnType<typeof setTimeout>;
     let retries = 0;
     let disposed = false;
 
@@ -199,7 +201,11 @@ export function useTelemetryFeed(
       ws = new WebSocket(wsUrl, ["thq", `thq-auth-${observerToken}`]);
 
       ws.onopen = () => {
-        retries = 0;
+        // 接続直後に切断される状態だと MAX_RETRIES が無効化されてしまうため、
+        // 一定時間安定して接続できたときにだけリトライ回数をリセットする
+        stableTimer = setTimeout(() => {
+          retries = 0;
+        }, STABLE_CONNECTION_MS);
         ws?.send(JSON.stringify({ type: "subscribe", device }));
       };
 
@@ -222,6 +228,8 @@ export function useTelemetryFeed(
       };
 
       ws.onclose = () => {
+        // 安定接続に達する前に切断されたらリセット予約を取り消す(接続ストーム防止)
+        clearTimeout(stableTimer);
         // 認証失敗(401)もハンドシェイク失敗としてここに来るため、
         // 無限リトライにならないよう回数上限と指数バックオフを入れる
         if (disposed || retries >= MAX_RETRIES) return;
@@ -236,6 +244,7 @@ export function useTelemetryFeed(
     return () => {
       disposed = true;
       clearTimeout(retryTimer);
+      clearTimeout(stableTimer);
       ws?.close();
     };
   }, [wsUrl, observerToken, device, queryClient]);
