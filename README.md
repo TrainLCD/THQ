@@ -77,8 +77,8 @@ telemetry_auth_token = "change-me-telemetry"
 | `ring_size` | — | `1000` | Ring buffer capacity |
 | `database_url` | `DATABASE_URL` | — | PostgreSQL connection URL |
 | `observer_auth_token` | `THQ_OBSERVER_AUTH_TOKEN` | — | Token for WebSocket observers |
-| `events_auth_token` | `THQ_EVENTS_AUTH_TOKEN` | — | Token allowed to send log events |
-| `telemetry_auth_token` | `THQ_TELEMETRY_AUTH_TOKEN` | — | Token allowed to send log events **and** location updates |
+| `events_auth_token` | `THQ_EVENTS_AUTH_TOKEN` | — | Token allowed to send log and interaction events |
+| `telemetry_auth_token` | `THQ_TELEMETRY_AUTH_TOKEN` | — | Token allowed to send log/interaction events **and** location updates |
 
 ## Authentication
 

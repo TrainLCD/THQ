@@ -67,6 +67,12 @@ struct FileConfig {
     telemetry_auth_token: Option<String>,
 }
 
+/// 空文字・空白のみのトークンは未設定(None)として扱う。
+/// clap は空の環境変数を Some("") として渡すため、ここで弾く。
+fn normalize_token(token: Option<String>) -> Option<String> {
+    token.filter(|t| !t.trim().is_empty())
+}
+
 impl Config {
     pub fn from_cli(cli: Cli) -> anyhow::Result<Self> {
         let mut file_cfg = if let Some(path) = cli.config.as_ref() {
@@ -100,9 +106,15 @@ impl Config {
             file_cfg.telemetry_auth_token = Some(telemetry_auth_token);
         }
 
-        let any_token = file_cfg.observer_auth_token.is_some()
-            || file_cfg.events_auth_token.is_some()
-            || file_cfg.telemetry_auth_token.is_some();
+        // 空文字・空白のみは未設定として扱い、空トークンで起動して
+        // 認証不能になる設定を弾く
+        let observer_auth_token = normalize_token(file_cfg.observer_auth_token);
+        let events_auth_token = normalize_token(file_cfg.events_auth_token);
+        let telemetry_auth_token = normalize_token(file_cfg.telemetry_auth_token);
+
+        let any_token = observer_auth_token.is_some()
+            || events_auth_token.is_some()
+            || telemetry_auth_token.is_some();
 
         if !any_token {
             anyhow::bail!(
@@ -115,9 +127,9 @@ impl Config {
             port: file_cfg.port.unwrap_or(8080),
             ring_size: file_cfg.ring_size.unwrap_or(1000).max(1),
             database_url: file_cfg.database_url,
-            observer_auth_token: file_cfg.observer_auth_token,
-            events_auth_token: file_cfg.events_auth_token,
-            telemetry_auth_token: file_cfg.telemetry_auth_token,
+            observer_auth_token,
+            events_auth_token,
+            telemetry_auth_token,
         })
     }
 }
@@ -246,5 +258,18 @@ mod tests {
         let err = Config::from_cli(empty_cli()).unwrap_err();
 
         assert!(err.to_string().contains("no auth token"));
+    }
+
+    #[test]
+    fn empty_or_blank_tokens_are_treated_as_unset() {
+        for token in ["", "   "] {
+            let err = Config::from_cli(Cli {
+                observer_auth_token: Some(token.into()),
+                ..empty_cli()
+            })
+            .unwrap_err();
+
+            assert!(err.to_string().contains("no auth token"));
+        }
     }
 }
