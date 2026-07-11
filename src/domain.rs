@@ -38,6 +38,20 @@ pub enum BatteryState {
     Full = 3,
 }
 
+impl BatteryState {
+    /// Maps the persisted SMALLINT representation back to the enum.
+    /// None when the stored value does not match a known variant.
+    pub fn from_i16(value: i16) -> Option<Self> {
+        match value {
+            0 => Some(BatteryState::Unknown),
+            1 => Some(BatteryState::Unplugged),
+            2 => Some(BatteryState::Charging),
+            3 => Some(BatteryState::Full),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
 #[graphql(rename_items = "lowercase")]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +69,18 @@ impl MovementState {
             MovementState::Approaching => "approaching",
             MovementState::Passing => "passing",
             MovementState::Moving => "moving",
+        }
+    }
+
+    /// Inverse of `as_str`. None when the stored value is unknown, e.g. a
+    /// row written by a newer server version.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "arrived" => Some(MovementState::Arrived),
+            "approaching" => Some(MovementState::Approaching),
+            "passing" => Some(MovementState::Passing),
+            "moving" => Some(MovementState::Moving),
+            _ => None,
         }
     }
 }
@@ -78,6 +104,18 @@ impl Platform {
             Platform::Unknown => "unknown",
         }
     }
+
+    /// Inverse of `as_str`. None when the stored value is unknown, e.g. a
+    /// row written by a newer server version.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "ios" => Some(Platform::Ios),
+            "android" => Some(Platform::Android),
+            "macos" => Some(Platform::Macos),
+            "unknown" => Some(Platform::Unknown),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
@@ -93,6 +131,16 @@ impl Channel {
         match self {
             Channel::Production => "production",
             Channel::Canary => "canary",
+        }
+    }
+
+    /// Inverse of `as_str`. None when the stored value is unknown, e.g. a
+    /// row written by a newer server version.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "production" => Some(Channel::Production),
+            "canary" => Some(Channel::Canary),
+            _ => None,
         }
     }
 }
@@ -116,6 +164,18 @@ impl LogLevel {
             LogLevel::Error => "error",
         }
     }
+
+    /// Inverse of `as_str`. None when the stored value is unknown, e.g. a
+    /// row written by a newer server version.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "debug" => Some(LogLevel::Debug),
+            "info" => Some(LogLevel::Info),
+            "warn" => Some(LogLevel::Warn),
+            "error" => Some(LogLevel::Error),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
@@ -133,6 +193,17 @@ impl LogType {
             LogType::System => "system",
             LogType::App => "app",
             LogType::Client => "client",
+        }
+    }
+
+    /// Inverse of `as_str`. None when the stored value is unknown, e.g. a
+    /// row written by a newer server version.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "system" => Some(LogType::System),
+            "app" => Some(LogType::App),
+            "client" => Some(LogType::Client),
+            _ => None,
         }
     }
 }

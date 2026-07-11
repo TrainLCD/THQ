@@ -14,7 +14,10 @@ use crate::{
     },
     segment::SegmentEstimator,
     state::TelemetryHub,
-    storage::{LineAccuracyBucketRow, Storage},
+    storage::{
+        EventFilter, InteractionEventRow, LineAccuracyBucketRow, LocationEventRow, LogEventRow,
+        Storage,
+    },
 };
 
 const BAD_ACCURACY_THRESHOLD: f64 = 100.0; // meters
@@ -25,12 +28,14 @@ pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 /// Scopes granted by the HTTP-layer Bearer token check, injected per request.
 ///
 /// - the events token only grants `can_send_events`
-/// - the telemetry token grants both flags
-/// - the observer token grants neither (it is WebSocket-only)
+/// - the telemetry token grants `can_send_events` and `can_send_location`
+/// - the observer token only grants `can_read_events` (raw history queries,
+///   mirroring its WebSocket observation role)
 #[derive(Clone, Copy)]
-pub struct MutationAuth {
+pub struct RequestAuth {
     pub can_send_events: bool,
     pub can_send_location: bool,
+    pub can_read_events: bool,
 }
 
 const HARD_LIMIT: i32 = 2000;
@@ -84,6 +89,89 @@ pub struct LineAccuracyBucket {
 pub struct LineAccuracyReport {
     pub line_id: ID,
     pub buckets: Vec<LineAccuracyBucket>,
+}
+
+/// A persisted log event, as accepted by the `sendLogEvent` mutation.
+///
+/// Fields that were added to the storage schema over time are nullable:
+/// legacy rows recorded before the column existed return null. Enum fields
+/// are also null when the stored value does not map to a known variant
+/// (e.g. a row written by a newer server version).
+#[derive(SimpleObject, Clone)]
+pub struct LogEvent {
+    /// Server-generated event ID.
+    pub id: ID,
+    pub session_id: Option<String>,
+    /// Null when the event was submitted anonymously.
+    pub device: Option<String>,
+    pub app_version: Option<String>,
+    pub platform: Option<Platform>,
+    pub channel: Option<Channel>,
+    /// Client-reported unix timestamp in milliseconds.
+    pub timestamp: u64,
+    #[graphql(name = "type")]
+    pub log_type: Option<LogType>,
+    pub level: Option<LogLevel>,
+    pub message: String,
+    /// Server-side time the event was persisted.
+    pub recorded_at: DateTime<Utc>,
+}
+
+/// A persisted interaction event, as accepted by the `sendInteractionEvent`
+/// mutation. See `LogEvent` for the nullability rules.
+#[derive(SimpleObject, Clone)]
+pub struct InteractionEvent {
+    /// Server-generated event ID.
+    pub id: ID,
+    pub session_id: Option<String>,
+    /// Null when the event was submitted anonymously.
+    pub device: Option<String>,
+    pub app_version: Option<String>,
+    pub platform: Option<Platform>,
+    pub channel: Option<Channel>,
+    /// Client-reported unix timestamp in milliseconds.
+    pub timestamp: u64,
+    pub event_name: String,
+    pub properties: Option<Properties>,
+    /// Server-side time the event was persisted.
+    pub recorded_at: DateTime<Utc>,
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct Coords {
+    pub latitude: f64,
+    pub longitude: f64,
+    /// Horizontal accuracy in meters.
+    pub accuracy: Option<f64>,
+    /// Speed in km/h.
+    pub speed: Option<f64>,
+}
+
+/// A persisted location update, as accepted by the `sendLocation` mutation,
+/// including the segment annotation added by the server. See `LogEvent` for
+/// the nullability rules.
+#[derive(SimpleObject, Clone)]
+pub struct LocationEvent {
+    /// Server-generated event ID.
+    pub id: ID,
+    pub session_id: Option<String>,
+    pub device: String,
+    pub state: Option<MovementState>,
+    pub station_id: Option<i32>,
+    pub line_id: Option<i32>,
+    pub coords: Coords,
+    /// Client-reported unix timestamp in milliseconds.
+    pub timestamp: u64,
+    /// Segment annotation inferred by the server; null when no topology was
+    /// loaded or the segment could not be estimated.
+    pub segment_id: Option<String>,
+    pub from_station_id: Option<i32>,
+    pub to_station_id: Option<i32>,
+    /// Battery level as a decimal (0.0 to 1.0).
+    pub battery_level: Option<f64>,
+    pub battery_state: Option<BatteryState>,
+    /// Server-side time the event was persisted.
+    pub recorded_at: DateTime<Utc>,
 }
 
 pub fn build_schema(
@@ -183,6 +271,147 @@ impl QueryRoot {
             buckets: rows.into_iter().map(LineAccuracyBucket::from).collect(),
         })
     }
+
+    /// Persisted log events, newest first. Counterpart of the
+    /// `sendLogEvent` mutation. Requires the observer token.
+    #[allow(clippy::too_many_arguments)] // flat filter args mirror accuracyByLine
+    async fn log_events(
+        &self,
+        ctx: &Context<'_>,
+        session_id: Option<String>,
+        device: Option<String>,
+        from: Option<DateTime<Utc>>,
+        to: Option<DateTime<Utc>>,
+        #[graphql(name = "type")] log_type: Option<LogType>,
+        level: Option<LogLevel>,
+        #[graphql(default = 100)] limit: i32,
+    ) -> Result<Vec<LogEvent>> {
+        let (storage, filter) = history_query(ctx, session_id, device, from, to, limit)?;
+
+        let started = Instant::now();
+        let rows = storage
+            .fetch_log_events(
+                &filter,
+                log_type.map(|t| t.as_str()),
+                level.map(|l| l.as_str()),
+            )
+            .await
+            .map_err(|e| format!("failed to fetch log events: {e}"))?;
+
+        info!(
+            count = rows.len(),
+            limit = filter.limit,
+            duration_ms = started.elapsed().as_millis(),
+            "logEvents resolver completed"
+        );
+
+        Ok(rows.into_iter().map(LogEvent::from).collect())
+    }
+
+    /// Persisted interaction events, newest first. Counterpart of the
+    /// `sendInteractionEvent` mutation. Requires the observer token.
+    #[allow(clippy::too_many_arguments)] // flat filter args mirror accuracyByLine
+    async fn interaction_events(
+        &self,
+        ctx: &Context<'_>,
+        session_id: Option<String>,
+        device: Option<String>,
+        from: Option<DateTime<Utc>>,
+        to: Option<DateTime<Utc>>,
+        event_name: Option<String>,
+        #[graphql(default = 100)] limit: i32,
+    ) -> Result<Vec<InteractionEvent>> {
+        let (storage, filter) = history_query(ctx, session_id, device, from, to, limit)?;
+
+        let started = Instant::now();
+        let rows = storage
+            .fetch_interaction_events(&filter, event_name.as_deref())
+            .await
+            .map_err(|e| format!("failed to fetch interaction events: {e}"))?;
+
+        info!(
+            count = rows.len(),
+            limit = filter.limit,
+            duration_ms = started.elapsed().as_millis(),
+            "interactionEvents resolver completed"
+        );
+
+        Ok(rows.into_iter().map(InteractionEvent::from).collect())
+    }
+
+    /// Persisted location updates, newest first. Counterpart of the
+    /// `sendLocation` mutation. Requires the observer token.
+    #[allow(clippy::too_many_arguments)] // flat filter args mirror accuracyByLine
+    async fn locations(
+        &self,
+        ctx: &Context<'_>,
+        session_id: Option<String>,
+        device: Option<String>,
+        from: Option<DateTime<Utc>>,
+        to: Option<DateTime<Utc>>,
+        line_id: Option<i32>,
+        state: Option<MovementState>,
+        #[graphql(default = 100)] limit: i32,
+    ) -> Result<Vec<LocationEvent>> {
+        let (storage, filter) = history_query(ctx, session_id, device, from, to, limit)?;
+
+        let started = Instant::now();
+        let rows = storage
+            .fetch_locations(&filter, line_id, state.map(|s| s.as_str()))
+            .await
+            .map_err(|e| format!("failed to fetch location updates: {e}"))?;
+
+        info!(
+            count = rows.len(),
+            limit = filter.limit,
+            duration_ms = started.elapsed().as_millis(),
+            "locations resolver completed"
+        );
+
+        Ok(rows.into_iter().map(LocationEvent::from).collect())
+    }
+}
+
+/// Shared setup for the raw history queries: enforces the observer read
+/// scope, validates the time range and resolves the storage handle.
+fn history_query<'a>(
+    ctx: &'a Context<'_>,
+    session_id: Option<String>,
+    device: Option<String>,
+    from: Option<DateTime<Utc>>,
+    to: Option<DateTime<Utc>>,
+    limit: i32,
+) -> Result<(&'a Storage, EventFilter)> {
+    let auth = ctx
+        .data::<RequestAuth>()
+        .map_err(|_| "auth context is missing")?;
+    if !auth.can_read_events {
+        return Err("unauthorized: a valid observer bearer token is required".into());
+    }
+
+    if let (Some(from), Some(to)) = (from, to) {
+        if from >= to {
+            return Err("from must be earlier than to".into());
+        }
+    }
+
+    let storage = ctx
+        .data::<Storage>()
+        .map_err(|_| "storage is not configured; DATABASE_URL is required")?;
+    if !storage.enabled() {
+        return Err("database-backed storage is disabled; history queries are unavailable".into());
+    }
+
+    Ok((
+        storage,
+        EventFilter {
+            session_id,
+            device,
+            from_ts: from.map(|t| t.timestamp_millis()),
+            to_ts: to.map(|t| t.timestamp_millis()),
+            limit: limit.clamp(1, HARD_LIMIT),
+        },
+    ))
 }
 
 #[derive(InputObject)]
@@ -282,7 +511,7 @@ impl MutationRoot {
         input: LogEventInput,
     ) -> Result<SendLogEventPayload> {
         let auth = ctx
-            .data::<MutationAuth>()
+            .data::<RequestAuth>()
             .map_err(|_| "auth context is missing")?;
         if !auth.can_send_events {
             return Err(
@@ -352,7 +581,7 @@ impl MutationRoot {
         input: InteractionEventInput,
     ) -> Result<SendInteractionEventPayload> {
         let auth = ctx
-            .data::<MutationAuth>()
+            .data::<RequestAuth>()
             .map_err(|_| "auth context is missing")?;
         if !auth.can_send_events {
             return Err(
@@ -417,7 +646,7 @@ impl MutationRoot {
         input: LocationEventInput,
     ) -> Result<SendLocationPayload> {
         let auth = ctx
-            .data::<MutationAuth>()
+            .data::<RequestAuth>()
             .map_err(|_| "auth context is missing")?;
         if !auth.can_send_location {
             return Err("unauthorized: a valid telemetry bearer token is required".into());
@@ -545,6 +774,69 @@ impl From<LineAccuracyBucketRow> for LineAccuracyBucket {
     }
 }
 
+impl From<LogEventRow> for LogEvent {
+    fn from(row: LogEventRow) -> Self {
+        Self {
+            id: row.id.into(),
+            session_id: row.session_id,
+            device: row.device,
+            app_version: row.app_version,
+            platform: row.platform.as_deref().and_then(Platform::parse),
+            channel: row.channel.as_deref().and_then(Channel::parse),
+            timestamp: u64::try_from(row.timestamp).unwrap_or(0),
+            log_type: LogType::parse(&row.log_type),
+            level: LogLevel::parse(&row.log_level),
+            message: row.message,
+            recorded_at: row.recorded_at,
+        }
+    }
+}
+
+impl From<InteractionEventRow> for InteractionEvent {
+    fn from(row: InteractionEventRow) -> Self {
+        Self {
+            id: row.id.into(),
+            session_id: row.session_id,
+            device: row.device,
+            app_version: row.app_version,
+            platform: row.platform.as_deref().and_then(Platform::parse),
+            channel: row.channel.as_deref().and_then(Channel::parse),
+            timestamp: u64::try_from(row.timestamp).unwrap_or(0),
+            event_name: row.event_name,
+            // stored properties are validated flat maps, so a mismatch only
+            // occurs on hand-edited data; degrade to null rather than fail
+            properties: row.properties.and_then(|v| serde_json::from_value(v).ok()),
+            recorded_at: row.recorded_at,
+        }
+    }
+}
+
+impl From<LocationEventRow> for LocationEvent {
+    fn from(row: LocationEventRow) -> Self {
+        Self {
+            id: row.id.into(),
+            session_id: row.session_id,
+            device: row.device,
+            state: MovementState::parse(&row.state),
+            station_id: row.station_id,
+            line_id: row.line_id,
+            coords: Coords {
+                latitude: row.latitude,
+                longitude: row.longitude,
+                accuracy: row.accuracy,
+                speed: row.speed,
+            },
+            timestamp: u64::try_from(row.timestamp).unwrap_or(0),
+            segment_id: row.segment_id,
+            from_station_id: row.from_station_id,
+            to_station_id: row.to_station_id,
+            battery_level: row.battery_level,
+            battery_state: row.battery_state.and_then(BatteryState::from_i16),
+            recorded_at: row.recorded_at,
+        }
+    }
+}
+
 fn estimate_bucket_count(from: DateTime<Utc>, to: DateTime<Utc>, bucket_seconds: i64) -> i64 {
     let span = to - from;
     let total_secs = span.num_seconds();
@@ -559,17 +851,20 @@ mod tests {
     use super::*;
     use crate::segment::LineTopology;
 
-    const EVENTS_ONLY: MutationAuth = MutationAuth {
+    const EVENTS_ONLY: RequestAuth = RequestAuth {
         can_send_events: true,
         can_send_location: false,
+        can_read_events: false,
     };
-    const TELEMETRY: MutationAuth = MutationAuth {
+    const TELEMETRY: RequestAuth = RequestAuth {
         can_send_events: true,
         can_send_location: true,
+        can_read_events: false,
     };
-    const OBSERVER: MutationAuth = MutationAuth {
+    const OBSERVER: RequestAuth = RequestAuth {
         can_send_events: false,
         can_send_location: false,
+        can_read_events: true,
     };
 
     fn test_schema(hub: Arc<TelemetryHub>) -> AppSchema {
@@ -580,7 +875,7 @@ mod tests {
         )
     }
 
-    fn request(query: &str, auth: MutationAuth) -> async_graphql::Request {
+    fn request(query: &str, auth: RequestAuth) -> async_graphql::Request {
         async_graphql::Request::new(query.to_string()).data(auth)
     }
 
@@ -1124,6 +1419,68 @@ mod tests {
         assert_eq!(snapshot.len(), 1);
         let v: serde_json::Value = serde_json::from_str(&snapshot[0]).unwrap();
         assert!(v["station_id"].is_null());
+    }
+
+    #[tokio::test]
+    async fn history_queries_reject_missing_read_scope() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub);
+
+        for query in [
+            r#"query { logEvents { id } }"#,
+            r#"query { interactionEvents { id } }"#,
+            r#"query { locations { id } }"#,
+        ] {
+            for auth in [EVENTS_ONLY, TELEMETRY] {
+                let resp = schema.execute(request(query, auth)).await;
+                assert!(!resp.errors.is_empty(), "expected rejection for {query}");
+                assert!(
+                    resp.errors[0].message.contains("observer"),
+                    "unexpected message for {query}: {}",
+                    resp.errors[0].message
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn history_queries_reject_inverted_time_range() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub);
+
+        let resp = schema
+            .execute(request(
+                r#"query {
+                    logEvents(from: "2026-07-02T00:00:00Z", to: "2026-07-01T00:00:00Z") { id }
+                }"#,
+                OBSERVER,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(resp.errors[0]
+            .message
+            .contains("from must be earlier than to"));
+    }
+
+    #[tokio::test]
+    async fn history_queries_report_disabled_storage_with_read_scope() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub);
+
+        for query in [
+            r#"query { logEvents { id } }"#,
+            r#"query { interactionEvents { id } }"#,
+            r#"query { locations { id } }"#,
+        ] {
+            let resp = schema.execute(request(query, OBSERVER)).await;
+            assert!(!resp.errors.is_empty(), "expected error for {query}");
+            assert!(
+                resp.errors[0].message.contains("storage is disabled"),
+                "unexpected message for {query}: {}",
+                resp.errors[0].message
+            );
+        }
     }
 
     #[test]

@@ -11,14 +11,16 @@ thq-server の GraphQL API はエンドポイント `POST /graphql` で公開さ
 | `sendLogEvent` | Mutation | イベント用または遠隔測定用トークン |
 | `sendInteractionEvent` | Mutation | イベント用または遠隔測定用トークン |
 | `sendLocation` | Mutation | 遠隔測定用トークンのみ |
+| `logEvents` / `interactionEvents` / `locations` | Query | 観測用トークンのみ |
 | `accuracyByLine` | Query | 不要 |
 
-Mutation の認証は `Authorization: Bearer <token>` ヘッダで行います。
+Mutation と履歴取得 Query の認証は `Authorization: Bearer <token>` ヘッダで行います。
 
 | トークン | できること |
 |---|---|
 | イベント用(`THQ_EVENTS_AUTH_TOKEN`) | `sendLogEvent` + `sendInteractionEvent` |
 | 遠隔測定用(`THQ_TELEMETRY_AUTH_TOKEN`) | `sendLogEvent` + `sendInteractionEvent` + `sendLocation` |
+| 観測用(`THQ_OBSERVER_AUTH_TOKEN`) | `logEvents` + `interactionEvents` + `locations`(+ WebSocket 購読) |
 
 > **セキュリティ上の注意**: ブラウザ向けにビルドした JavaScript に埋め込んだトークンは、利用者全員から見えます。イベント用・遠隔測定用トークンを Web フロントエンドに直接埋め込むのは避け、ネイティブアプリや自前のバックエンド(BFF)経由で扱ってください。認証不要な `accuracyByLine` の表示だけであればトークンは一切不要です。
 
@@ -171,6 +173,116 @@ function AccuracyChart() {
 ```
 
 バケットサイズごとの最大期間(minute ≤ 7 日、hour ≤ 90 日、day ≤ 365 日)を超えるとエラーになる点に注意してください。
+
+## Query: 履歴取得(`logEvents` / `interactionEvents` / `locations`)
+
+各 Mutation には 1:1 で対応する履歴取得 Query があり、永続化済みのイベントを新しい順に返します。**観測用トークン**(`THQ_OBSERVER_AUTH_TOKEN`)が必要です。WebSocket でリアルタイム観測できるのと同じ読み取り専用ロールが、過去分もさかのぼれるという位置づけです。サーバーにデータベースが設定されていない場合はエラーになります。
+
+| Query | 対応する Mutation | 固有フィルタ |
+|---|---|---|
+| `logEvents` | `sendLogEvent` | `type`, `level` |
+| `interactionEvents` | `sendInteractionEvent` | `eventName` |
+| `locations` | `sendLocation` | `lineId`, `state` |
+
+3 つの Query に共通のフィルタ(すべて省略可): `sessionId`、`device`、`from` / `to`(クライアント報告 `timestamp` に対する範囲。`from` は以上、`to` は未満)、`limit`(デフォルト 100、上限 2000)。
+
+```ts
+// hooks/useLogEvents.ts
+import { useQuery } from "@tanstack/react-query";
+import { gqlRequest } from "../lib/graphql";
+
+const LOG_EVENTS = /* GraphQL */ `
+  query LogEvents(
+    $sessionId: String
+    $device: String
+    $from: DateTime
+    $to: DateTime
+    $type: LogType
+    $level: LogLevel
+    $limit: Int
+  ) {
+    logEvents(
+      sessionId: $sessionId
+      device: $device
+      from: $from
+      to: $to
+      type: $type
+      level: $level
+      limit: $limit
+    ) {
+      id
+      sessionId
+      device
+      appVersion
+      platform
+      channel
+      timestamp
+      type
+      level
+      message
+      recordedAt
+    }
+  }
+`;
+
+export interface LogEventRecord {
+  id: string;
+  sessionId: string | null; // 過去の移行前データでは null になり得る
+  device: string | null; // 匿名送信されたイベントは null
+  appVersion: string | null;
+  platform: "ios" | "android" | "macos" | "unknown" | null;
+  channel: "production" | "canary" | null;
+  timestamp: number; // クライアント報告の Unix ミリ秒
+  type: "system" | "app" | "client" | null;
+  level: "debug" | "info" | "warn" | "error" | null;
+  message: string;
+  recordedAt: string; // サーバー側で永続化した時刻(ISO 8601)
+}
+
+export function useLogEvents(
+  token: string, // 観測用トークン
+  params: {
+    sessionId?: string;
+    device?: string;
+    from?: string; // ISO 8601
+    to?: string;
+    type?: "system" | "app" | "client";
+    level?: "debug" | "info" | "warn" | "error";
+    limit?: number;
+  } = {},
+) {
+  return useQuery({
+    queryKey: ["logEvents", params],
+    queryFn: () => gqlRequest<{ logEvents: LogEventRecord[] }>(LOG_EVENTS, params, token),
+  });
+}
+```
+
+`interactionEvents` と `locations` も同じ形で、返るフィールドはそれぞれの Mutation の入力(+ サーバー付与の `id` / `recordedAt`、`locations` は区間推定の `segmentId` / `fromStationId` / `toStationId` も)に対応します。
+
+```graphql
+query {
+  interactionEvents(eventName: "tab_change", limit: 50) {
+    id sessionId device appVersion platform channel
+    timestamp eventName properties recordedAt
+  }
+}
+```
+
+```graphql
+query {
+  locations(lineId: 11302, state: moving, from: "2026-07-01T00:00:00Z", to: "2026-07-02T00:00:00Z") {
+    id sessionId device state stationId lineId
+    coords { latitude longitude accuracy speed }
+    timestamp segmentId fromStationId toStationId
+    batteryLevel batteryState recordedAt
+  }
+}
+```
+
+> **null の扱い**: ストレージのカラムは段階的に追加されてきたため、追加前に記録されたレガシー行では `sessionId` / `appVersion` / `lineId` などが `null` になります。enum 系フィールド(`platform` / `channel` / `type` / `level` / `state` / `batteryState`)も、既知の値に対応しない場合(新しいサーバーが書いた行を古いサーバーが読むケースなど)は `null` になります。
+
+> **セキュリティ上の注意**: 観測用トークンは生の位置情報・ログを閲覧できる読み取り専用トークンです。公開サイトへの埋め込みは避けるか、漏えい時にローテーションできる運用にしてください(WebSocket 観測と同じ注意事項です)。
 
 ## Mutation: ログイベント送信(`sendLogEvent`)
 

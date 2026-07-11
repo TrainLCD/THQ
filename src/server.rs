@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     domain::{ErrorBody, ErrorType, IncomingMessage, OutgoingError, OutgoingMessage},
-    graphql::{build_schema, AppSchema, MutationAuth},
+    graphql::{build_schema, AppSchema, RequestAuth},
     segment::{LineTopology, SegmentEstimator},
     state::TelemetryHub,
     storage::Storage,
@@ -149,19 +149,21 @@ async fn graphql_handler(
     headers: HeaderMap,
     req: GraphQLRequest,
 ) -> GraphQLResponse {
-    let auth = mutation_auth(&headers, &state.auth);
+    let auth = request_auth(&headers, &state.auth);
     let req = req.into_inner().data(auth);
     state.schema.execute(req).await.into()
 }
 
-/// Resolves the mutation scopes granted by the Authorization header.
-/// Queries stay open, so the result is carried into the GraphQL context
-/// instead of rejecting the request here.
-fn mutation_auth(headers: &HeaderMap, auth: &AuthConfig) -> MutationAuth {
+/// Resolves the scopes granted by the Authorization header. Aggregated
+/// queries stay open, so the result is carried into the GraphQL context
+/// instead of rejecting the request here; mutations and raw history
+/// queries check their scope in the resolver.
+fn request_auth(headers: &HeaderMap, auth: &AuthConfig) -> RequestAuth {
     let Some(token) = bearer_token(headers) else {
-        return MutationAuth {
+        return RequestAuth {
             can_send_events: false,
             can_send_location: false,
+            can_read_events: false,
         };
     };
 
@@ -174,10 +176,12 @@ fn mutation_auth(headers: &HeaderMap, auth: &AuthConfig) -> MutationAuth {
 
     let can_send_location = matches(&auth.telemetry_token);
     let can_send_events = can_send_location || matches(&auth.events_token);
+    let can_read_events = matches(&auth.observer_token);
 
-    MutationAuth {
+    RequestAuth {
         can_send_events,
         can_send_location,
+        can_read_events,
     }
 }
 
@@ -678,9 +682,79 @@ mod tests {
     }
 
     #[test]
-    fn mutation_auth_denies_missing_header() {
-        let auth = mutation_auth(&HeaderMap::new(), &scoped_auth());
+    fn request_auth_denies_missing_header() {
+        let auth = request_auth(&HeaderMap::new(), &scoped_auth());
         assert!(!auth.can_send_events);
         assert!(!auth.can_send_location);
+        assert!(!auth.can_read_events);
+    }
+
+    #[test]
+    fn request_auth_grants_read_scope_to_observer_token_only() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer observer-secret".parse().unwrap());
+        let auth = request_auth(&headers, &scoped_auth());
+        assert!(auth.can_read_events);
+        assert!(!auth.can_send_events);
+        assert!(!auth.can_send_location);
+
+        for token in ["events-secret", "telemetry-secret"] {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                AUTHORIZATION,
+                format!("Bearer {token}").parse().unwrap(),
+            );
+            let auth = request_auth(&headers, &scoped_auth());
+            assert!(!auth.can_read_events, "{token} must not grant read scope");
+        }
+    }
+
+    // GraphQL history queries over HTTP
+
+    fn log_events_request(auth_header: Option<&str>) -> Request<Body> {
+        graphql_request(r#"query { logEvents { id message } }"#, auth_header)
+    }
+
+    #[tokio::test]
+    async fn log_events_rejects_missing_auth() {
+        let app = graphql_router(state_with_auth(scoped_auth()));
+
+        let response = app.oneshot(log_events_request(None)).await.unwrap();
+        let v = body_json(response).await;
+        assert!(v["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unauthorized"));
+    }
+
+    #[tokio::test]
+    async fn log_events_rejects_events_and_telemetry_tokens() {
+        for token in ["Bearer events-secret", "Bearer telemetry-secret"] {
+            let app = graphql_router(state_with_auth(scoped_auth()));
+            let response = app.oneshot(log_events_request(Some(token))).await.unwrap();
+            let v = body_json(response).await;
+            assert!(
+                v["errors"][0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("unauthorized"),
+                "{token} must not grant history access"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn log_events_accepts_observer_token_and_reports_disabled_storage() {
+        let app = graphql_router(state_with_auth(scoped_auth()));
+
+        let response = app
+            .oneshot(log_events_request(Some("Bearer observer-secret")))
+            .await
+            .unwrap();
+        let v = body_json(response).await;
+        // the auth gate passes; without a database the query fails afterwards
+        let message = v["errors"][0]["message"].as_str().unwrap();
+        assert!(!message.contains("unauthorized"), "message: {message}");
+        assert!(message.contains("storage"), "message: {message}");
     }
 }

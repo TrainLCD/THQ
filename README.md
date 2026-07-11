@@ -5,10 +5,10 @@ A telemetry server for [TrainLCD](https://github.com/TrainLCD). It provides real
 ## Features
 
 - **WebSocket** — Real-time broadcast of location updates and log events
-- **GraphQL** — Event ingestion (`sendLogEvent`, `sendInteractionEvent`, `sendLocation` mutations) and aggregated per-line accuracy reports (`POST /graphql`)
+- **GraphQL** — Event ingestion (`sendLogEvent`, `sendInteractionEvent`, `sendLocation` mutations), history queries (`logEvents`, `interactionEvents`, `locations`) and aggregated per-line accuracy reports (`POST /graphql`)
 - **PostgreSQL persistence** — Optionally stores all events in the database
 - **Ring buffer** — Keeps the latest N events in memory (default 1000)
-- **Scoped authentication** — Three shared secrets: observer (WebSocket only), events (log submission only), telemetry (log + location submission)
+- **Scoped authentication** — Three shared secrets: observer (WebSocket + history queries), events (log submission only), telemetry (log + location submission)
 - **Line topology** — Automatic segment annotation from a CSV topology file
 
 ## Requirements
@@ -84,15 +84,16 @@ telemetry_auth_token = "change-me-telemetry"
 
 Three shared secrets grant exactly one role each:
 
-| Token | WebSocket subscribe | `sendLogEvent` / `sendInteractionEvent` | `sendLocation` |
-|---|---|---|---|
-| Observer | ✅ | ❌ | ❌ |
-| Events | ❌ | ✅ | ❌ |
-| Telemetry | ❌ | ✅ | ✅ |
+| Token | WebSocket subscribe | History queries (`logEvents` / `interactionEvents` / `locations`) | `sendLogEvent` / `sendInteractionEvent` | `sendLocation` |
+|---|---|---|---|---|
+| Observer | ✅ | ✅ | ❌ | ❌ |
+| Events | ❌ | ❌ | ✅ | ❌ |
+| Telemetry | ❌ | ❌ | ✅ | ✅ |
 
 - **WebSocket** — send the observer token via subprotocols: `Sec-WebSocket-Protocol: thq, thq-auth-<token>`
 - **GraphQL mutations** — send the events or telemetry token via `Authorization: Bearer <token>`
-- **GraphQL queries** — no authentication (aggregated data only)
+- **GraphQL history queries** — send the observer token via `Authorization: Bearer <token>`; raw event data is exposed only to the observation role that already sees it in real time over WebSocket
+- **GraphQL aggregated queries** (`accuracyByLine`) — no authentication (aggregated data only)
 
 Authentication is always enforced. At least one token must be configured, or the server refuses to start.
 
@@ -176,9 +177,64 @@ mutation {
 
 `stationId` is only meaningful when `state` is `arrived` or `passing` and is ignored otherwise. `batteryLevel` (0.0–1.0) and `batteryState` (`unknown | unplugged | charging | full`) are optional.
 
+#### `logEvents` / `interactionEvents` / `locations` — History queries
+
+Each mutation has a matching query returning the persisted events, newest first. All three require the **observer token** (`Authorization: Bearer <token>`) — the same read-only role that observes events in real time over WebSocket — and a configured database.
+
+```graphql
+query {
+  logEvents(
+    sessionId: "d0f7..."       # all filters are optional
+    device: "device-001"
+    from: "2026-07-01T00:00:00Z"   # client-reported timestamp range
+    to: "2026-07-02T00:00:00Z"
+    type: app                  # system | app | client
+    level: error               # debug | info | warn | error
+    limit: 100                 # default 100, cap 2000
+  ) {
+    id sessionId device appVersion platform channel
+    timestamp type level message recordedAt
+  }
+}
+```
+
+```graphql
+query {
+  interactionEvents(eventName: "tab_change", limit: 50) {
+    id sessionId device appVersion platform channel
+    timestamp eventName properties recordedAt
+  }
+}
+```
+
+```graphql
+query {
+  locations(lineId: 11302, state: moving, from: "2026-07-01T00:00:00Z", to: "2026-07-02T00:00:00Z") {
+    id sessionId device state stationId lineId
+    coords { latitude longitude accuracy speed }
+    timestamp segmentId fromStationId toStationId
+    batteryLevel batteryState recordedAt
+  }
+}
+```
+
+Shared parameters (all optional):
+
+| Parameter | Type | Description |
+|---|---|---|
+| `sessionId` | `String` | Exact session ID match |
+| `device` | `String` | Exact device ID match |
+| `from` | `DateTime` | Inclusive lower bound on the client-reported timestamp |
+| `to` | `DateTime` | Exclusive upper bound on the client-reported timestamp |
+| `limit` | `Int` | Max events returned, newest first (default 100, cap 2000) |
+
+Per-query filters: `logEvents` also accepts `type` and `level`; `interactionEvents` accepts `eventName`; `locations` accepts `lineId` and `state`.
+
+Columns added to the storage schema over time are nullable in the results: legacy rows recorded before a column existed return `null` for it (e.g. `sessionId`, `appVersion`, or `lineId` on old rows). `recordedAt` is the server-side persistence time, while `timestamp` is the client-reported unix-millisecond value.
+
 #### `accuracyByLine` — Aggregated accuracy report
 
-Returns aggregated accuracy metrics per line. Raw location data is never exposed through queries.
+Returns aggregated accuracy metrics per line. Raw event data is exposed only through the observer-token history queries above; this aggregated report requires no authentication.
 
 ```graphql
 query {

@@ -20,6 +20,72 @@ pub struct LineAccuracyBucketRow {
     pub max_speed: Option<f64>,
 }
 
+/// Common optional filters shared by the raw history queries. `None` fields
+/// leave the corresponding column unfiltered.
+pub struct EventFilter {
+    pub session_id: Option<String>,
+    pub device: Option<String>,
+    /// Inclusive lower bound on the client-reported timestamp, unix millis.
+    pub from_ts: Option<i64>,
+    /// Exclusive upper bound on the client-reported timestamp, unix millis.
+    pub to_ts: Option<i64>,
+    pub limit: i32,
+}
+
+/// Raw row of the `log_events` table. Columns added by later migrations are
+/// nullable because legacy rows predate them.
+#[derive(Clone, sqlx::FromRow)]
+pub struct LogEventRow {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub device: Option<String>,
+    pub app_version: Option<String>,
+    pub platform: Option<String>,
+    pub channel: Option<String>,
+    pub log_type: String,
+    pub log_level: String,
+    pub message: String,
+    pub timestamp: i64,
+    pub recorded_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+}
+
+/// Raw row of the `interaction_events` table.
+#[derive(Clone, sqlx::FromRow)]
+pub struct InteractionEventRow {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub device: Option<String>,
+    pub app_version: Option<String>,
+    pub platform: Option<String>,
+    pub channel: Option<String>,
+    pub event_name: String,
+    pub properties: Option<serde_json::Value>,
+    pub timestamp: i64,
+    pub recorded_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+}
+
+/// Raw row of the `location_logs` table.
+#[derive(Clone, sqlx::FromRow)]
+pub struct LocationEventRow {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub device: String,
+    pub state: String,
+    pub station_id: Option<i32>,
+    pub line_id: Option<i32>,
+    pub segment_id: Option<String>,
+    pub from_station_id: Option<i32>,
+    pub to_station_id: Option<i32>,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub accuracy: Option<f64>,
+    pub speed: Option<f64>,
+    pub timestamp: i64,
+    pub battery_level: Option<f64>,
+    pub battery_state: Option<i16>,
+    pub recorded_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+}
+
 #[derive(Clone, Default)]
 pub struct Storage {
     pool: Option<PgPool>,
@@ -212,6 +278,25 @@ impl Storage {
         .execute(pool)
         .await?;
 
+        // history queries page through events by client-reported timestamp
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_location_logs_timestamp ON location_logs (timestamp DESC);",
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_log_events_timestamp ON log_events (timestamp DESC);",
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_events_timestamp ON interaction_events (timestamp DESC);",
+        )
+        .execute(pool)
+        .await?;
+
         Ok(())
     }
 
@@ -354,6 +439,128 @@ impl Storage {
         .bind(limit)
         .fetch_all(pool)
         .await?;
+
+        Ok(rows)
+    }
+
+    /// Fetches persisted log events, newest first.
+    pub async fn fetch_log_events(
+        &self,
+        filter: &EventFilter,
+        log_type: Option<&str>,
+        level: Option<&str>,
+    ) -> anyhow::Result<Vec<LogEventRow>> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("database is not configured"))?;
+
+        let rows = sqlx::query_as::<_, LogEventRow>(
+            r#"
+            SELECT id, session_id, device, app_version, platform, channel,
+                   log_type, log_level, message, timestamp, recorded_at
+            FROM log_events
+            WHERE ($1::text IS NULL OR session_id = $1)
+              AND ($2::text IS NULL OR device = $2)
+              AND ($3::bigint IS NULL OR timestamp >= $3)
+              AND ($4::bigint IS NULL OR timestamp < $4)
+              AND ($5::text IS NULL OR log_type = $5)
+              AND ($6::text IS NULL OR log_level = $6)
+            ORDER BY timestamp DESC
+            LIMIT $7
+            "#,
+        )
+        .bind(&filter.session_id)
+        .bind(&filter.device)
+        .bind(filter.from_ts)
+        .bind(filter.to_ts)
+        .bind(log_type)
+        .bind(level)
+        .bind(filter.limit)
+        .fetch_all(pool)
+        .await
+        .context("failed to fetch log events")?;
+
+        Ok(rows)
+    }
+
+    /// Fetches persisted interaction events, newest first.
+    pub async fn fetch_interaction_events(
+        &self,
+        filter: &EventFilter,
+        event_name: Option<&str>,
+    ) -> anyhow::Result<Vec<InteractionEventRow>> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("database is not configured"))?;
+
+        let rows = sqlx::query_as::<_, InteractionEventRow>(
+            r#"
+            SELECT id, session_id, device, app_version, platform, channel,
+                   event_name, properties, timestamp, recorded_at
+            FROM interaction_events
+            WHERE ($1::text IS NULL OR session_id = $1)
+              AND ($2::text IS NULL OR device = $2)
+              AND ($3::bigint IS NULL OR timestamp >= $3)
+              AND ($4::bigint IS NULL OR timestamp < $4)
+              AND ($5::text IS NULL OR event_name = $5)
+            ORDER BY timestamp DESC
+            LIMIT $6
+            "#,
+        )
+        .bind(&filter.session_id)
+        .bind(&filter.device)
+        .bind(filter.from_ts)
+        .bind(filter.to_ts)
+        .bind(event_name)
+        .bind(filter.limit)
+        .fetch_all(pool)
+        .await
+        .context("failed to fetch interaction events")?;
+
+        Ok(rows)
+    }
+
+    /// Fetches persisted location updates, newest first.
+    pub async fn fetch_locations(
+        &self,
+        filter: &EventFilter,
+        line_id: Option<i32>,
+        state: Option<&str>,
+    ) -> anyhow::Result<Vec<LocationEventRow>> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("database is not configured"))?;
+
+        let rows = sqlx::query_as::<_, LocationEventRow>(
+            r#"
+            SELECT id, session_id, device, state, station_id, line_id,
+                   segment_id, from_station_id, to_station_id,
+                   latitude, longitude, accuracy, speed,
+                   timestamp, battery_level, battery_state, recorded_at
+            FROM location_logs
+            WHERE ($1::text IS NULL OR session_id = $1)
+              AND ($2::text IS NULL OR device = $2)
+              AND ($3::bigint IS NULL OR timestamp >= $3)
+              AND ($4::bigint IS NULL OR timestamp < $4)
+              AND ($5::integer IS NULL OR line_id = $5)
+              AND ($6::text IS NULL OR state = $6)
+            ORDER BY timestamp DESC
+            LIMIT $7
+            "#,
+        )
+        .bind(&filter.session_id)
+        .bind(&filter.device)
+        .bind(filter.from_ts)
+        .bind(filter.to_ts)
+        .bind(line_id)
+        .bind(state)
+        .bind(filter.limit)
+        .fetch_all(pool)
+        .await
+        .context("failed to fetch location updates")?;
 
         Ok(rows)
     }
