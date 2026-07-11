@@ -399,11 +399,11 @@ export function useSendLocation(token: string) {
 Geolocation API と組み合わせる例:
 
 ```tsx
-const sendLocation = useSendLocation(telemetryToken);
+const { mutate: sendLocation } = useSendLocation(telemetryToken);
 
 useEffect(() => {
   const watchId = navigator.geolocation.watchPosition((pos) => {
-    sendLocation.mutate({
+    sendLocation({
       sessionId,
       device: "device-001",
       state: "moving",
@@ -418,7 +418,7 @@ useEffect(() => {
     });
   });
   return () => navigator.geolocation.clearWatch(watchId);
-}, []);
+}, [sendLocation, sessionId]);
 ```
 
 ## 接続先の設定(環境変数)
