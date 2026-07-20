@@ -203,7 +203,6 @@ impl Channel {
     /// assert_eq!(Channel::parse("production"), Some(Channel::Production));
     /// assert_eq!(Channel::parse("unknown"), None);
     /// ```
-    pub fn parse(value: &str) -> Option<Self>
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "production" => Some(Channel::Production),
@@ -298,7 +297,6 @@ impl LogType {
     /// ```
     ///
     /// Returns `None` for unrecognized values.
-    pub fn parse(value: &str) -> Option<Self>
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "system" => Some(LogType::System),

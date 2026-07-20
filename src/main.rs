@@ -17,6 +17,7 @@ use config::{Cli, Config};
 /// // Start the server with the application's command-line configuration.
 /// // cargo run -- --help
 /// ```
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
     let cli = Cli::parse();

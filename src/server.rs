@@ -162,7 +162,6 @@ async fn ws_handler(
 /// ```
 /// let response = healthz();
 /// ```
-async fn healthz() -> impl IntoResponse
 async fn healthz() -> impl IntoResponse {
     StatusCode::OK
 }

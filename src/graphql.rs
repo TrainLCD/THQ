@@ -1093,7 +1093,6 @@ impl From<LocationEventRow> for LocationEvent {
 ///
 /// assert_eq!(estimate_bucket_count(from, to, 60), 2);
 /// ```
-fn estimate_bucket_count from? Wait output only docstring, not signature. Must omit signature. Example references function okay. Need include only comments. Also perhaps `bucket_seconds` positive implicit. final.
 fn estimate_bucket_count(from: DateTime<Utc>, to: DateTime<Utc>, bucket_seconds: i64) -> i64 {
     let span = to - from;
     let total_secs = span.num_seconds();
