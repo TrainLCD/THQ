@@ -5,7 +5,8 @@ use sqlx::{postgres::PgPoolOptions, PgPool};
 use tracing::info;
 
 use crate::domain::{
-    BatteryState, LogLevel, LogType, MovementState, OutgoingLocation, OutgoingLog,
+    BatteryState, LogLevel, LogType, MovementState, OutgoingInteraction, OutgoingLocation,
+    OutgoingLog,
 };
 
 #[derive(Clone, sqlx::FromRow)]
@@ -17,6 +18,72 @@ pub struct LineAccuracyBucketRow {
     pub sample_count: i32,
     pub avg_speed: Option<f64>,
     pub max_speed: Option<f64>,
+}
+
+/// Common optional filters shared by the raw history queries. `None` fields
+/// leave the corresponding column unfiltered.
+pub struct EventFilter {
+    pub session_id: Option<String>,
+    pub device: Option<String>,
+    /// Inclusive lower bound on the client-reported timestamp, unix millis.
+    pub from_ts: Option<i64>,
+    /// Exclusive upper bound on the client-reported timestamp, unix millis.
+    pub to_ts: Option<i64>,
+    pub limit: i32,
+}
+
+/// Raw row of the `log_events` table. Columns added by later migrations are
+/// nullable because legacy rows predate them.
+#[derive(Clone, sqlx::FromRow)]
+pub struct LogEventRow {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub device: Option<String>,
+    pub app_version: Option<String>,
+    pub platform: Option<String>,
+    pub channel: Option<String>,
+    pub log_type: String,
+    pub log_level: String,
+    pub message: String,
+    pub timestamp: i64,
+    pub recorded_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+}
+
+/// Raw row of the `interaction_events` table.
+#[derive(Clone, sqlx::FromRow)]
+pub struct InteractionEventRow {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub device: Option<String>,
+    pub app_version: Option<String>,
+    pub platform: Option<String>,
+    pub channel: Option<String>,
+    pub event_name: String,
+    pub properties: Option<serde_json::Value>,
+    pub timestamp: i64,
+    pub recorded_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+}
+
+/// Raw row of the `location_logs` table.
+#[derive(Clone, sqlx::FromRow)]
+pub struct LocationEventRow {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub device: String,
+    pub state: String,
+    pub station_id: Option<i32>,
+    pub line_id: Option<i32>,
+    pub segment_id: Option<String>,
+    pub from_station_id: Option<i32>,
+    pub to_station_id: Option<i32>,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub accuracy: Option<f64>,
+    pub speed: Option<f64>,
+    pub timestamp: i64,
+    pub battery_level: Option<f64>,
+    pub battery_state: Option<i16>,
+    pub recorded_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
 }
 
 #[derive(Clone, Default)]
@@ -50,6 +117,18 @@ impl Storage {
         self.pool.is_some()
     }
 
+    /// Initializes the configured database schema and required indexes.
+    ///
+    /// Does nothing when no database pool is configured. Database errors are propagated.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(storage: &Storage) -> anyhow::Result<()> {
+    /// storage.prepare().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn prepare(&self) -> anyhow::Result<()> {
         let Some(pool) = &self.pool else {
             return Ok(());
@@ -59,6 +138,7 @@ impl Storage {
             r#"
             CREATE TABLE IF NOT EXISTS location_logs (
                 id TEXT PRIMARY KEY,
+                session_id TEXT,
                 device TEXT NOT NULL,
                 state TEXT NOT NULL,
                 station_id INTEGER,
@@ -108,12 +188,19 @@ impl Storage {
         sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS battery_state SMALLINT;")
             .execute(pool)
             .await?;
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS session_id TEXT;")
+            .execute(pool)
+            .await?;
 
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS log_events (
                 id TEXT PRIMARY KEY,
-                device TEXT NOT NULL,
+                session_id TEXT,
+                device TEXT,
+                app_version TEXT,
+                platform TEXT,
+                channel TEXT,
                 log_type TEXT NOT NULL,
                 log_level TEXT NOT NULL,
                 message TEXT NOT NULL,
@@ -124,6 +211,38 @@ impl Storage {
         )
         .execute(pool)
         .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS interaction_events (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                device TEXT,
+                app_version TEXT,
+                platform TEXT,
+                channel TEXT,
+                properties JSONB,
+                event_name TEXT NOT NULL,
+                timestamp BIGINT NOT NULL,
+                recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query("ALTER TABLE interaction_events ADD COLUMN IF NOT EXISTS app_version TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE interaction_events ADD COLUMN IF NOT EXISTS platform TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE interaction_events ADD COLUMN IF NOT EXISTS channel TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE interaction_events ADD COLUMN IF NOT EXISTS properties JSONB;")
+            .execute(pool)
+            .await?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_location_logs_device ON location_logs (device);",
@@ -137,13 +256,84 @@ impl Storage {
         .execute(pool)
         .await?;
 
+        // Allow NULL in device column so log events can be submitted anonymously;
+        // idempotent on columns already nullable.
+        sqlx::query("ALTER TABLE log_events ALTER COLUMN device DROP NOT NULL;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE log_events ADD COLUMN IF NOT EXISTS session_id TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE log_events ADD COLUMN IF NOT EXISTS app_version TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE log_events ADD COLUMN IF NOT EXISTS platform TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE log_events ADD COLUMN IF NOT EXISTS channel TEXT;")
+            .execute(pool)
+            .await?;
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_log_events_device ON log_events (device);")
             .execute(pool)
             .await?;
 
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_events_name ON interaction_events (event_name);",
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_events_session ON interaction_events (session_id);",
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_events_device ON interaction_events (device);",
+        )
+        .execute(pool)
+        .await?;
+
+        // history queries page through events by client-reported timestamp
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_location_logs_timestamp ON location_logs (timestamp DESC);",
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_log_events_timestamp ON log_events (timestamp DESC);",
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_events_timestamp ON interaction_events (timestamp DESC);",
+        )
+        .execute(pool)
+        .await?;
+
         Ok(())
     }
 
+    /// Stores a location update in the configured database, ignoring duplicate identifiers.
+    ///
+    /// When database storage is disabled, the operation succeeds without persisting the
+    /// location. Database insertion failures are returned with additional context.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let storage = Storage::default();
+    /// let location: OutgoingLocation = todo!();
+    ///
+    /// storage.store_location(&location).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn store_location(&self, loc: &OutgoingLocation) -> anyhow::Result<()> {
         let Some(pool) = &self.pool else {
             return Ok(());
@@ -152,9 +342,10 @@ impl Storage {
         let ts = i64::try_from(loc.timestamp).unwrap_or(i64::MAX);
 
         sqlx::query(
-            "INSERT INTO location_logs (id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp, battery_level, battery_state) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO location_logs (id, session_id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp, battery_level, battery_state) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&loc.id)
+        .bind(&loc.session_id)
         .bind(&loc.device)
         .bind(movement_state_str(&loc.state))
         .bind(loc.station_id)
@@ -176,6 +367,23 @@ impl Storage {
         Ok(())
     }
 
+    /// Stores a log event in the configured database.
+    ///
+    /// Duplicate event identifiers are ignored. When no database is configured, the
+    /// operation succeeds without storing the event.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log event cannot be inserted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(storage: &Storage, log: &OutgoingLog) -> anyhow::Result<()> {
+    /// storage.store_log(log).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn store_log(&self, log: &OutgoingLog) -> anyhow::Result<()> {
         let Some(pool) = &self.pool else {
             return Ok(());
@@ -184,10 +392,14 @@ impl Storage {
         let ts = i64::try_from(log.timestamp).unwrap_or(i64::MAX);
 
         sqlx::query(
-            "INSERT INTO log_events (id, device, log_type, log_level, message, timestamp) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO log_events (id, session_id, device, app_version, platform, channel, log_type, log_level, message, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&log.id)
+        .bind(&log.session_id)
         .bind(&log.device)
+        .bind(&log.app_version)
+        .bind(log.platform.as_str())
+        .bind(log.channel.as_str())
         .bind(log_type_str(&log.log.r#type))
         .bind(log_level_str(&log.log.level))
         .bind(&log.log.message)
@@ -199,6 +411,87 @@ impl Storage {
         Ok(())
     }
 
+    /// Stores an interaction event when database storage is configured.
+    ///
+    /// Serialization failures for optional properties are stored as a null value.
+    /// Duplicate event IDs are ignored.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(storage: &Storage, event: &OutgoingInteraction) -> anyhow::Result<()> {
+    /// storage.store_interaction(event).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Returns `Ok(())` when the event is stored, ignored as a duplicate, or database
+    /// storage is not configured; otherwise, returns the database error.
+    pub async fn store_interaction(&self, event: &OutgoingInteraction) -> anyhow::Result<()> {
+        let Some(pool) = &self.pool else {
+            return Ok(());
+        };
+
+        let ts = i64::try_from(event.timestamp).unwrap_or(i64::MAX);
+
+        let properties = event
+            .properties
+            .as_ref()
+            .and_then(|p| serde_json::to_value(p).ok());
+
+        sqlx::query(
+            "INSERT INTO interaction_events (id, session_id, device, app_version, platform, channel, properties, event_name, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(&event.id)
+        .bind(&event.session_id)
+        .bind(&event.device)
+        .bind(&event.app_version)
+        .bind(event.platform.as_str())
+        .bind(event.channel.as_str())
+        .bind(properties)
+        .bind(&event.event_name)
+        .bind(ts)
+        .execute(pool)
+        .await
+        .context("failed to insert interaction event")?;
+
+        Ok(())
+    }
+
+    /// Aggregates line accuracy measurements into time-based buckets.
+    ///
+    /// Each bucket includes average and 90th-percentile accuracy, sample count,
+    /// and available speed statistics for the specified line and time range.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database is not configured or the query fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example() -> anyhow::Result<()> {
+    /// use chrono::Utc;
+    ///
+    /// let storage = Storage::default();
+    /// let result = storage
+    ///     .fetch_line_accuracy(1, Utc::now(), Utc::now(), "hour", 3600, 100)
+    ///     .await;
+    ///
+    /// assert!(result.is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// * `trunc_unit` - PostgreSQL time unit used to group measurements.
+    /// * `bucket_seconds` - Duration of each bucket in seconds.
+    /// * `limit` - Maximum number of buckets to return.
+    ///
+    /// # Returns
+    ///
+    /// A list of accuracy metric buckets ordered by bucket start time.
     pub async fn fetch_line_accuracy(
         &self,
         line_id: i32,
@@ -250,8 +543,195 @@ impl Storage {
 
         Ok(rows)
     }
+
+    /// Retrieves log events matching the supplied filters, ordered from newest to oldest.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(storage: &Storage) {
+    /// let filter = EventFilter {
+    ///     session_id: None,
+    ///     device: None,
+    ///     from_ts: None,
+    ///     to_ts: None,
+    ///     limit: 100,
+    /// };
+    /// let events = storage.fetch_log_events(&filter, Some("error"), None).await?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// # }
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// * `filter` - Session, device, timestamp-range, and result-limit constraints.
+    /// * `log_type` - Optional log type constraint.
+    /// * `level` - Optional log level constraint.
+    ///
+    /// # Returns
+    ///
+    /// Matching log event rows, ordered by descending timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database is not configured or the query fails.
+    pub async fn fetch_log_events(
+        &self,
+        filter: &EventFilter,
+        log_type: Option<&str>,
+        level: Option<&str>,
+    ) -> anyhow::Result<Vec<LogEventRow>> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("database is not configured"))?;
+
+        let rows = sqlx::query_as::<_, LogEventRow>(
+            r#"
+            SELECT id, session_id, device, app_version, platform, channel,
+                   log_type, log_level, message, timestamp, recorded_at
+            FROM log_events
+            WHERE ($1::text IS NULL OR session_id = $1)
+              AND ($2::text IS NULL OR device = $2)
+              AND ($3::bigint IS NULL OR timestamp >= $3)
+              AND ($4::bigint IS NULL OR timestamp < $4)
+              AND ($5::text IS NULL OR log_type = $5)
+              AND ($6::text IS NULL OR log_level = $6)
+            ORDER BY timestamp DESC
+            LIMIT $7
+            "#,
+        )
+        .bind(&filter.session_id)
+        .bind(&filter.device)
+        .bind(filter.from_ts)
+        .bind(filter.to_ts)
+        .bind(log_type)
+        .bind(level)
+        .bind(filter.limit)
+        .fetch_all(pool)
+        .await
+        .context("failed to fetch log events")?;
+
+        Ok(rows)
+    }
+
+    /// Retrieves persisted interaction events matching the supplied filters, ordered from newest to oldest.
+    ///
+    /// # Arguments
+    ///
+    /// * `filter` - Session, device, time-range, and result-limit constraints.
+    /// * `event_name` - Optional event name constraint.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let storage = Storage::connect(Some(std::env::var("DATABASE_URL")?)).await?;
+    /// let filter = EventFilter {
+    ///     session_id: None,
+    ///     device: None,
+    ///     from_ts: None,
+    ///     to_ts: None,
+    ///     limit: 100,
+    /// };
+    /// let events = storage.fetch_interaction_events(&filter, Some("app_opened")).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database is not configured or the query fails.
+    pub async fn fetch_interaction_events(
+        &self,
+        filter: &EventFilter,
+        event_name: Option<&str>,
+    ) -> anyhow::Result<Vec<InteractionEventRow>> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("database is not configured"))?;
+
+        let rows = sqlx::query_as::<_, InteractionEventRow>(
+            r#"
+            SELECT id, session_id, device, app_version, platform, channel,
+                   event_name, properties, timestamp, recorded_at
+            FROM interaction_events
+            WHERE ($1::text IS NULL OR session_id = $1)
+              AND ($2::text IS NULL OR device = $2)
+              AND ($3::bigint IS NULL OR timestamp >= $3)
+              AND ($4::bigint IS NULL OR timestamp < $4)
+              AND ($5::text IS NULL OR event_name = $5)
+            ORDER BY timestamp DESC
+            LIMIT $6
+            "#,
+        )
+        .bind(&filter.session_id)
+        .bind(&filter.device)
+        .bind(filter.from_ts)
+        .bind(filter.to_ts)
+        .bind(event_name)
+        .bind(filter.limit)
+        .fetch_all(pool)
+        .await
+        .context("failed to fetch interaction events")?;
+
+        Ok(rows)
+    }
+
+    /// Fetches persisted location updates, newest first.
+    pub async fn fetch_locations(
+        &self,
+        filter: &EventFilter,
+        line_id: Option<i32>,
+        state: Option<&str>,
+    ) -> anyhow::Result<Vec<LocationEventRow>> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("database is not configured"))?;
+
+        let rows = sqlx::query_as::<_, LocationEventRow>(
+            r#"
+            SELECT id, session_id, device, state, station_id, line_id,
+                   segment_id, from_station_id, to_station_id,
+                   latitude, longitude, accuracy, speed,
+                   timestamp, battery_level, battery_state, recorded_at
+            FROM location_logs
+            WHERE ($1::text IS NULL OR session_id = $1)
+              AND ($2::text IS NULL OR device = $2)
+              AND ($3::bigint IS NULL OR timestamp >= $3)
+              AND ($4::bigint IS NULL OR timestamp < $4)
+              AND ($5::integer IS NULL OR line_id = $5)
+              AND ($6::text IS NULL OR state = $6)
+            ORDER BY timestamp DESC
+            LIMIT $7
+            "#,
+        )
+        .bind(&filter.session_id)
+        .bind(&filter.device)
+        .bind(filter.from_ts)
+        .bind(filter.to_ts)
+        .bind(line_id)
+        .bind(state)
+        .bind(filter.limit)
+        .fetch_all(pool)
+        .await
+        .context("failed to fetch location updates")?;
+
+        Ok(rows)
+    }
 }
 
+/// Converts a movement state to its string representation.
+///
+/// # Examples
+///
+/// ```
+/// let state = MovementState::default();
+/// let name = movement_state_str(&state);
+/// assert!(!name.is_empty());
+/// ```
 fn movement_state_str(state: &MovementState) -> &'static str {
     state.as_str()
 }

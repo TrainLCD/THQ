@@ -6,8 +6,9 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://thq:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/thq
-      THQ_WS_AUTH_TOKEN: ${THQ_WS_AUTH_TOKEN:?set in .env or shell}
-      THQ_WS_AUTH_REQUIRED: ${THQ_WS_AUTH_REQUIRED:-true}
+      THQ_OBSERVER_AUTH_TOKEN: ${THQ_OBSERVER_AUTH_TOKEN:?set in .env or shell}
+      THQ_EVENTS_AUTH_TOKEN: ${THQ_EVENTS_AUTH_TOKEN:?set in .env or shell}
+      THQ_TELEMETRY_AUTH_TOKEN: ${THQ_TELEMETRY_AUTH_TOKEN:?set in .env or shell}
       # RUST_LOG: debug,thq_server=debug
       # RUST_BACKTRACE: 1
       THQ_LINE_TOPOLOGY_PATH: /app/static/join.csv
@@ -32,23 +33,5 @@ services:
       timeout: 5s
       retries: 5
 
-  grafana:
-    image: grafana/grafana:11.4.0
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?GF_SECURITY_ADMIN_PASSWORD is required}
-      GF_USERS_ALLOW_SIGN_UP: "false"
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-    ports:
-      - "3000:3000"
-    restart: unless-stopped
-
 volumes:
   db-data:
-  grafana-data:

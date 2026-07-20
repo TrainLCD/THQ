@@ -20,7 +20,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 thiserror = "1"
 futures = "0.3"
-sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "macros"] }
+sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "macros", "json"] }
 async-graphql = { version = "6", features = ["chrono"] }
 async-graphql-axum = "6"
 chrono = { version = "0.4", features = ["serde"] }

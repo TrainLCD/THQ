@@ -492,6 +492,7 @@ mod tests {
 
         let first = OutgoingLocation {
             id: "1".into(),
+            session_id: "sess".into(),
             device: "dev".into(),
             state: MovementState::Arrived,
             station_id: Some(101),
@@ -531,6 +532,7 @@ mod tests {
 
         let base = OutgoingLocation {
             id: "1".into(),
+            session_id: "sess".into(),
             device: "dev".into(),
             state: MovementState::Arrived,
             station_id: Some(101),
@@ -635,6 +637,7 @@ mod tests {
 
         let first = OutgoingLocation {
             id: "1".into(),
+            session_id: "sess".into(),
             device: "dev".into(),
             state: MovementState::Arrived,
             station_id: Some(101),
@@ -676,6 +679,7 @@ mod tests {
 
         let loc = OutgoingLocation {
             id: "1".into(),
+            session_id: "sess".into(),
             device: "dev".into(),
             state: MovementState::Arrived,
             station_id: Some(1),

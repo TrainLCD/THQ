@@ -9,6 +9,14 @@ mod storage;
 use clap::Parser;
 use config::{Cli, Config};
 
+/// Starts the server using configuration parsed from command-line arguments.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Start the server with the application's command-line configuration.
+/// // cargo run -- --help
+/// ```
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
@@ -18,8 +26,9 @@ async fn main() -> anyhow::Result<()> {
         host = %config.host,
         port = config.port,
         db = %config.database_url.as_deref().unwrap_or("<none>"),
-        ws_auth_configured = config.ws_auth_token.is_some(),
-        ws_auth_required = config.ws_auth_required,
+        observer_auth_configured = config.observer_auth_token.is_some(),
+        events_auth_configured = config.events_auth_token.is_some(),
+        telemetry_auth_configured = config.telemetry_auth_token.is_some(),
         "starting thq-server"
     );
     match server::run_server(config).await {
