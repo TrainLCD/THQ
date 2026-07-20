@@ -239,6 +239,15 @@ export interface LogEventRecord {
   recordedAt: string; // サーバー側で永続化した時刻(ISO 8601)
 }
 
+// キャッシュキー分離用の非機密な識別子を導出する(生の token はキーに含めない)
+function tokenCacheKey(token: string): string {
+  let hash = 0;
+  for (let i = 0; i < token.length; i++) {
+    hash = (hash * 31 + token.charCodeAt(i)) | 0;
+  }
+  return hash.toString(36);
+}
+
 export function useLogEvents(
   token: string, // 観測用トークン
   params: {
@@ -252,7 +261,8 @@ export function useLogEvents(
   } = {},
 ) {
   return useQuery({
-    queryKey: ["logEvents", params],
+    // token 切替時に前のトークンのキャッシュを再利用しないよう、非機密なハッシュ値をキーに含める
+    queryKey: ["logEvents", tokenCacheKey(token), params],
     queryFn: () => gqlRequest<{ logEvents: LogEventRecord[] }>(LOG_EVENTS, params, token),
   });
 }
@@ -281,7 +291,7 @@ query {
 ```
 
 > **null の扱い**: ストレージのカラムは段階的に追加されてきたため、追加前に記録されたレガシー行では `sessionId` / `appVersion` / `lineId` などが `null` になります。enum 系フィールド(`platform` / `channel` / `type` / `level` / `state` / `batteryState`)も、既知の値に対応しない場合(新しいサーバーが書いた行を古いサーバーが読むケースなど)は `null` になります。
-
+>
 > **セキュリティ上の注意**: 観測用トークンは生の位置情報・ログを閲覧できる読み取り専用トークンです。公開サイトへの埋め込みは避けるか、漏えい時にローテーションできる運用にしてください(WebSocket 観測と同じ注意事項です)。
 
 ## Mutation: ログイベント送信(`sendLogEvent`)

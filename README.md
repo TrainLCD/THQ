@@ -4,11 +4,11 @@ A telemetry server for [TrainLCD](https://github.com/TrainLCD). It provides real
 
 ## Features
 
-- **WebSocket** — Real-time broadcast of location updates and log events
+- **WebSocket** — Real-time broadcast of location updates, log events, and interaction events
 - **GraphQL** — Event ingestion (`sendLogEvent`, `sendInteractionEvent`, `sendLocation` mutations), history queries (`logEvents`, `interactionEvents`, `locations`) and aggregated per-line accuracy reports (`POST /graphql`)
 - **PostgreSQL persistence** — Optionally stores all events in the database
 - **Ring buffer** — Keeps the latest N events in memory (default 1000)
-- **Scoped authentication** — Three shared secrets: observer (WebSocket + history queries), events (log submission only), telemetry (log + location submission)
+- **Scoped authentication** — Three shared secrets: observer (WebSocket + history queries), events (log + interaction submission), telemetry (log + interaction + location submission)
 - **Line topology** — Automatic segment annotation from a CSV topology file
 
 ## Requirements

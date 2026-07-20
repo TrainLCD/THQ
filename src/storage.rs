@@ -278,6 +278,12 @@ impl Storage {
         .execute(pool)
         .await?;
 
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_events_device ON interaction_events (device);",
+        )
+        .execute(pool)
+        .await?;
+
         // history queries page through events by client-reported timestamp
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_location_logs_timestamp ON location_logs (timestamp DESC);",
