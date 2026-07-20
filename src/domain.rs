@@ -39,8 +39,22 @@ pub enum BatteryState {
 }
 
 impl BatteryState {
-    /// Maps the persisted SMALLINT representation back to the enum.
-    /// None when the stored value does not match a known variant.
+    /// Converts a persisted `SMALLINT` value to its corresponding battery state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(BatteryState::from_i16(2), Some(BatteryState::Charging));
+    /// assert_eq!(BatteryState::from_i16(99), None);
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `Some` with the matching battery state, or `None` for an unknown value.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The persisted battery state value.
     pub fn from_i16(value: i16) -> Option<Self> {
         match value {
             0 => Some(BatteryState::Unknown),
@@ -63,6 +77,13 @@ pub enum MovementState {
 }
 
 impl MovementState {
+    /// Converts the movement state to its lowercase string representation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(MovementState::Arrived.as_str(), "arrived");
+    /// ```
     pub fn as_str(&self) -> &'static str {
         match self {
             MovementState::Arrived => "arrived",
@@ -72,8 +93,16 @@ impl MovementState {
         }
     }
 
-    /// Inverse of `as_str`. None when the stored value is unknown, e.g. a
-    /// row written by a newer server version.
+    /// Parses a movement state from its lowercase string representation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(MovementState::parse("arrived"), Some(MovementState::Arrived));
+    /// assert_eq!(MovementState::parse("unknown"), None);
+    /// ```
+    ///
+    /// Returns `None` for unrecognized values.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "arrived" => Some(MovementState::Arrived),
@@ -96,6 +125,17 @@ pub enum Platform {
 }
 
 impl Platform {
+    /// Converts the platform to its lowercase string representation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(Platform::Ios.as_str(), "ios");
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// The lowercase string corresponding to the platform.
     pub fn as_str(&self) -> &'static str {
         match self {
             Platform::Ios => "ios",
@@ -105,8 +145,19 @@ impl Platform {
         }
     }
 
-    /// Inverse of `as_str`. None when the stored value is unknown, e.g. a
-    /// row written by a newer server version.
+    /// Parses a platform identifier.
+    ///
+    /// # Returns
+    ///
+    /// `Some` with the corresponding platform for a recognized identifier, or `None`
+    /// for an unrecognized value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(Platform::parse("ios"), Some(Platform::Ios));
+    /// assert_eq!(Platform::parse("other"), None);
+    /// ```
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "ios" => Some(Platform::Ios),
@@ -127,6 +178,14 @@ pub enum Channel {
 }
 
 impl Channel {
+    /// Returns the lowercase string representation of the channel.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(Channel::Production.as_str(), "production");
+    /// assert_eq!(Channel::Canary.as_str(), "canary");
+    /// ```
     pub fn as_str(&self) -> &'static str {
         match self {
             Channel::Production => "production",
@@ -134,8 +193,17 @@ impl Channel {
         }
     }
 
-    /// Inverse of `as_str`. None when the stored value is unknown, e.g. a
-    /// row written by a newer server version.
+    /// Parses a channel name.
+    ///
+    /// Returns `Some` channel for `"production"` or `"canary"`, and `None` for unknown values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(Channel::parse("production"), Some(Channel::Production));
+    /// assert_eq!(Channel::parse("unknown"), None);
+    /// ```
+    pub fn parse(value: &str) -> Option<Self>
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "production" => Some(Channel::Production),
@@ -156,6 +224,13 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
+    /// Provides the lowercase string representation of the log level.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(LogLevel::Info.as_str(), "info");
+    /// ```
     pub fn as_str(&self) -> &'static str {
         match self {
             LogLevel::Debug => "debug",
@@ -165,8 +240,15 @@ impl LogLevel {
         }
     }
 
-    /// Inverse of `as_str`. None when the stored value is unknown, e.g. a
-    /// row written by a newer server version.
+    /// Parses a lowercase string into a log level.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(LogLevel::parse("info"), Some(LogLevel::Info));
+    /// ```
+    ///
+    /// Returns `None` for unrecognized values.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "debug" => Some(LogLevel::Debug),
@@ -188,6 +270,17 @@ pub enum LogType {
 }
 
 impl LogType {
+    /// Converts the log type to its lowercase string representation.
+    ///
+    /// # Returns
+    ///
+    /// The corresponding string: `"system"`, `"app"`, or `"client"`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(LogType::System.as_str(), "system");
+    /// ```
     pub fn as_str(&self) -> &'static str {
         match self {
             LogType::System => "system",
@@ -196,8 +289,16 @@ impl LogType {
         }
     }
 
-    /// Inverse of `as_str`. None when the stored value is unknown, e.g. a
-    /// row written by a newer server version.
+    /// Parses a log type from its lowercase string representation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(LogType::parse("app"), Some(LogType::App));
+    /// ```
+    ///
+    /// Returns `None` for unrecognized values.
+    pub fn parse(value: &str) -> Option<Self>
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "system" => Some(LogType::System),

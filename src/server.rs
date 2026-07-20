@@ -45,6 +45,21 @@ struct AppState {
     schema: AppSchema,
 }
 
+/// Starts the HTTP and WebSocket server using the supplied configuration.
+///
+/// Configures GraphQL and WebSocket routes, optional database persistence, and graceful shutdown handling.
+///
+/// # Errors
+///
+/// Returns an error if storage initialization, address parsing, or server startup fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example(config: Config) -> anyhow::Result<()> {
+/// run_server(config).await
+/// # }
+/// ```
 pub async fn run_server(config: Config) -> anyhow::Result<()> {
     let hub = Arc::new(TelemetryHub::new(config.ring_size));
     let storage = Storage::connect(config.database_url.clone()).await?;
@@ -140,10 +155,34 @@ async fn ws_handler(
     upgrade.on_upgrade(move |socket| handle_socket(socket, peer, state))
 }
 
+/// Returns a successful health-check response.
+///
+/// # Examples
+///
+/// ```
+/// let response = healthz();
+/// ```
+async fn healthz() -> impl IntoResponse
 async fn healthz() -> impl IntoResponse {
     StatusCode::OK
 }
 
+/// Executes a GraphQL request with authorization scopes derived from the request headers.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example() {
+/// // Send a GraphQL request to the server's `/graphql` endpoint with
+/// // an Authorization header containing the appropriate bearer token.
+/// # }
+/// ```
+///
+/// # Returns
+///
+/// The GraphQL execution response.
+///
+/// [`GraphQLResponse`]: crate::graphql::GraphQLResponse
 async fn graphql_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -154,10 +193,27 @@ async fn graphql_handler(
     state.schema.execute(req).await.into()
 }
 
-/// Resolves the scopes granted by the Authorization header. Aggregated
-/// queries stay open, so the result is carried into the GraphQL context
-/// instead of rejecting the request here; mutations and raw history
-/// queries check their scope in the resolver.
+/// Determines the capabilities granted by the bearer token in the `Authorization` header.
+///
+/// A telemetry token grants location and event submission, an events token grants event
+/// submission, and an observer token grants event-history access. Missing or unmatched
+/// credentials grant no capabilities.
+///
+/// # Examples
+///
+/// ```
+/// let headers = HeaderMap::new();
+/// let auth = AuthConfig {
+///     observer_token: None,
+///     events_token: None,
+///     telemetry_token: None,
+/// };
+///
+/// let scopes = request_auth(&headers, &auth);
+/// assert!(!scopes.can_send_events);
+/// assert!(!scopes.can_send_location);
+/// assert!(!scopes.can_read_events);
+/// ```
 fn request_auth(headers: &HeaderMap, auth: &AuthConfig) -> RequestAuth {
     let Some(token) = bearer_token(headers) else {
         return RequestAuth {
@@ -185,6 +241,21 @@ fn request_auth(headers: &HeaderMap, auth: &AuthConfig) -> RequestAuth {
     }
 }
 
+/// Extracts a bearer token from an authorization header.
+///
+/// # Examples
+///
+/// ```
+/// use axum::http::{HeaderMap, HeaderValue};
+///
+/// let mut headers = HeaderMap::new();
+/// headers.insert("authorization", HeaderValue::from_static("Bearer secret"));
+///
+/// assert_eq!(bearer_token(&headers), Some("secret"));
+/// ```
+///
+/// Returns `None` when the header is missing, invalid, or does not use the
+/// `Bearer` scheme.
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     let header = headers.get(AUTHORIZATION)?.to_str().ok()?;
     header.get(..7).and_then(|pref| {
@@ -196,6 +267,18 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     })
 }
 
+/// Handles a WebSocket connection and its subscription messages.
+///
+/// Sends responses to the client, reports unsupported frames, and removes the
+/// client subscription when the connection ends.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example(socket: WebSocket, peer: SocketAddr, state: AppState) {
+/// handle_socket(socket, peer, state).await;
+/// # }
+/// ```
 async fn handle_socket(socket: WebSocket, peer: SocketAddr, state: AppState) {
     let hub = state.hub.clone();
     let (mut ws_tx, mut ws_rx) = socket.split();
@@ -287,6 +370,25 @@ impl AuthError {
         }
     }
 
+    /// Provides a human-readable explanation for the authentication error.
+    
+    ///
+    
+    /// # Examples
+    
+    ///
+    
+    /// ```
+    
+    /// assert_eq!(
+    
+    ///     AuthError::MissingHeader.message(),
+    
+    ///     "missing Sec-WebSocket-Protocol header"
+    
+    /// );
+    
+    /// ```
     fn message(&self) -> &'static str {
         match self {
             AuthError::MissingHeader => "missing Sec-WebSocket-Protocol header",
@@ -298,8 +400,22 @@ impl AuthError {
     }
 }
 
-/// WebSocket observation is granted by the observer token only; the events
-/// and telemetry tokens deliberately do not open the subscription channel.
+/// Authenticates a WebSocket subscription using the configured observer token.
+///
+/// The header must include the `thq` protocol and a matching `thq-auth-<token>`
+/// entry. Events and telemetry tokens are not accepted.
+///
+/// # Examples
+///
+/// ```
+/// let auth = AuthConfig {
+///     observer_token: Some("secret".to_owned()),
+///     events_token: None,
+///     telemetry_token: None,
+/// };
+///
+/// assert!(enforce_ws_auth(Some("thq, thq-auth-secret"), &auth).is_ok());
+/// ```
 fn enforce_ws_auth(header: Option<&str>, auth: &AuthConfig) -> Result<(), AuthError> {
     let raw = header.ok_or(AuthError::MissingHeader)?;
     let parsed = parse_protocol_header(raw);
@@ -711,6 +827,25 @@ mod tests {
 
     // GraphQL history queries over HTTP
 
+    /// Builds a GraphQL request for retrieving log events.
+    
+    ///
+    
+    /// # Examples
+    
+    ///
+    
+    /// ```
+    
+    /// let request = log_events_request(None);
+    
+    /// assert_eq!(request.method(), "POST");
+    
+    /// ```
+    
+    ///
+    
+    /// `auth_header` optionally supplies the HTTP authorization header.
     fn log_events_request(auth_header: Option<&str>) -> Request<Body> {
         graphql_request(r#"query { logEvents { id message } }"#, auth_header)
     }

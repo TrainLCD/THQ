@@ -117,6 +117,18 @@ impl Storage {
         self.pool.is_some()
     }
 
+    /// Initializes the configured database schema and required indexes.
+    ///
+    /// Does nothing when no database pool is configured. Database errors are propagated.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(storage: &Storage) -> anyhow::Result<()> {
+    /// storage.prepare().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn prepare(&self) -> anyhow::Result<()> {
         let Some(pool) = &self.pool else {
             return Ok(());
@@ -306,6 +318,22 @@ impl Storage {
         Ok(())
     }
 
+    /// Stores a location update in the configured database, ignoring duplicate identifiers.
+    ///
+    /// When database storage is disabled, the operation succeeds without persisting the
+    /// location. Database insertion failures are returned with additional context.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let storage = Storage::default();
+    /// let location: OutgoingLocation = todo!();
+    ///
+    /// storage.store_location(&location).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn store_location(&self, loc: &OutgoingLocation) -> anyhow::Result<()> {
         let Some(pool) = &self.pool else {
             return Ok(());
@@ -339,6 +367,23 @@ impl Storage {
         Ok(())
     }
 
+    /// Stores a log event in the configured database.
+    ///
+    /// Duplicate event identifiers are ignored. When no database is configured, the
+    /// operation succeeds without storing the event.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log event cannot be inserted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(storage: &Storage, log: &OutgoingLog) -> anyhow::Result<()> {
+    /// storage.store_log(log).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn store_log(&self, log: &OutgoingLog) -> anyhow::Result<()> {
         let Some(pool) = &self.pool else {
             return Ok(());
@@ -366,6 +411,22 @@ impl Storage {
         Ok(())
     }
 
+    /// Stores an interaction event when database storage is configured.
+    ///
+    /// Serialization failures for optional properties are stored as a null value.
+    /// Duplicate event IDs are ignored.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(storage: &Storage, event: &OutgoingInteraction) -> anyhow::Result<()> {
+    /// storage.store_interaction(event).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Returns `Ok(())` when the event is stored, ignored as a duplicate, or database
+    /// storage is not configured; otherwise, returns the database error.
     pub async fn store_interaction(&self, event: &OutgoingInteraction) -> anyhow::Result<()> {
         let Some(pool) = &self.pool else {
             return Ok(());
@@ -397,6 +458,40 @@ impl Storage {
         Ok(())
     }
 
+    /// Aggregates line accuracy measurements into time-based buckets.
+    ///
+    /// Each bucket includes average and 90th-percentile accuracy, sample count,
+    /// and available speed statistics for the specified line and time range.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database is not configured or the query fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example() -> anyhow::Result<()> {
+    /// use chrono::Utc;
+    ///
+    /// let storage = Storage::default();
+    /// let result = storage
+    ///     .fetch_line_accuracy(1, Utc::now(), Utc::now(), "hour", 3600, 100)
+    ///     .await;
+    ///
+    /// assert!(result.is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// * `trunc_unit` - PostgreSQL time unit used to group measurements.
+    /// * `bucket_seconds` - Duration of each bucket in seconds.
+    /// * `limit` - Maximum number of buckets to return.
+    ///
+    /// # Returns
+    ///
+    /// A list of accuracy metric buckets ordered by bucket start time.
     pub async fn fetch_line_accuracy(
         &self,
         line_id: i32,
@@ -449,7 +544,37 @@ impl Storage {
         Ok(rows)
     }
 
-    /// Fetches persisted log events, newest first.
+    /// Retrieves log events matching the supplied filters, ordered from newest to oldest.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(storage: &Storage) {
+    /// let filter = EventFilter {
+    ///     session_id: None,
+    ///     device: None,
+    ///     from_ts: None,
+    ///     to_ts: None,
+    ///     limit: 100,
+    /// };
+    /// let events = storage.fetch_log_events(&filter, Some("error"), None).await?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// # }
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// * `filter` - Session, device, timestamp-range, and result-limit constraints.
+    /// * `log_type` - Optional log type constraint.
+    /// * `level` - Optional log level constraint.
+    ///
+    /// # Returns
+    ///
+    /// Matching log event rows, ordered by descending timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database is not configured or the query fails.
     pub async fn fetch_log_events(
         &self,
         filter: &EventFilter,
@@ -490,7 +615,33 @@ impl Storage {
         Ok(rows)
     }
 
-    /// Fetches persisted interaction events, newest first.
+    /// Retrieves persisted interaction events matching the supplied filters, ordered from newest to oldest.
+    ///
+    /// # Arguments
+    ///
+    /// * `filter` - Session, device, time-range, and result-limit constraints.
+    /// * `event_name` - Optional event name constraint.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let storage = Storage::connect(Some(std::env::var("DATABASE_URL")?)).await?;
+    /// let filter = EventFilter {
+    ///     session_id: None,
+    ///     device: None,
+    ///     from_ts: None,
+    ///     to_ts: None,
+    ///     limit: 100,
+    /// };
+    /// let events = storage.fetch_interaction_events(&filter, Some("app_opened")).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database is not configured or the query fails.
     pub async fn fetch_interaction_events(
         &self,
         filter: &EventFilter,
@@ -572,6 +723,15 @@ impl Storage {
     }
 }
 
+/// Converts a movement state to its string representation.
+///
+/// # Examples
+///
+/// ```
+/// let state = MovementState::default();
+/// let name = movement_state_str(&state);
+/// assert!(!name.is_empty());
+/// ```
 fn movement_state_str(state: &MovementState) -> &'static str {
     state.as_str()
 }

@@ -9,7 +9,14 @@ mod storage;
 use clap::Parser;
 use config::{Cli, Config};
 
-#[tokio::main]
+/// Starts the server using configuration parsed from command-line arguments.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Start the server with the application's command-line configuration.
+/// // cargo run -- --help
+/// ```
 async fn main() -> anyhow::Result<()> {
     init_tracing();
     let cli = Cli::parse();

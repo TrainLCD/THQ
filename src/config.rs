@@ -67,13 +67,48 @@ struct FileConfig {
     telemetry_auth_token: Option<String>,
 }
 
-/// 空文字・空白のみのトークンは未設定(None)として扱う。
-/// clap は空の環境変数を Some("") として渡すため、ここで弾く。
+/// Treats empty and whitespace-only authentication tokens as unset.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(normalize_token(Some("token".to_owned())), Some("token".to_owned()));
+/// assert_eq!(normalize_token(Some("   ".to_owned())), None);
+/// assert_eq!(normalize_token(None), None);
+/// ```
 fn normalize_token(token: Option<String>) -> Option<String> {
     token.filter(|t| !t.trim().is_empty())
 }
 
 impl Config {
+    /// Loads configuration from an optional TOML file and applies CLI overrides.
+    ///
+    /// Authentication tokens containing only whitespace are treated as unset. The
+    /// configuration is rejected when no observer, events, or telemetry token is
+    /// configured.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the configuration file cannot be read or parsed, or if
+    /// no authentication token is configured.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cli = Cli {
+    ///     host: None,
+    ///     port: None,
+    ///     config: None,
+    ///     ring_size: None,
+    ///     database_url: None,
+    ///     observer_auth_token: Some("secret".to_string()),
+    ///     events_auth_token: None,
+    ///     telemetry_auth_token: None,
+    /// };
+    ///
+    /// let config = Config::from_cli(cli).unwrap();
+    /// assert_eq!(config.observer_auth_token.as_deref(), Some("secret"));
+    /// ```
     pub fn from_cli(cli: Cli) -> anyhow::Result<Self> {
         let mut file_cfg = if let Some(path) = cli.config.as_ref() {
             let raw = fs::read_to_string(path)

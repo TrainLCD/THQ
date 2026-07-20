@@ -174,6 +174,19 @@ pub struct LocationEvent {
     pub recorded_at: DateTime<Utc>,
 }
 
+/// Builds the application GraphQL schema with storage, telemetry, and segment-estimation dependencies.
+///
+/// # Examples
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use crate::{build_schema, SegmentEstimator, Storage, TelemetryHub};
+/// let schema = build_schema(
+///     Storage::default(),
+///     Arc::new(TelemetryHub::default()),
+///     SegmentEstimator::default(),
+/// );
+/// ```
 pub fn build_schema(
     storage: Storage,
     hub: Arc<TelemetryHub>,
@@ -191,7 +204,36 @@ pub struct QueryRoot;
 
 #[Object]
 impl QueryRoot {
-    /// Aggregated accuracy metrics per line and time bucket.
+    /// Builds an accuracy report for a line over a bounded time range, grouped into time buckets.
+    ///
+    /// The line identifier must be numeric. The requested range and estimated bucket count are
+    /// validated against the selected bucket size and hard limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when storage is unavailable or disabled, the time range is invalid or too
+    /// large, the estimated bucket count exceeds the hard limit, the line identifier is not numeric,
+    /// or the report cannot be fetched.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let query = r#"
+    ///   {
+    ///     accuracyByLine(
+    ///       lineId: "42",
+    ///       from: "2024-01-01T00:00:00Z",
+    ///       to: "2024-01-01T01:00:00Z",
+    ///       bucketSize: HOUR
+    ///     ) {
+    ///       lineId
+    ///       buckets { start end averageAccuracy }
+    ///     }
+    ///   }
+    /// "#;
+    ///
+    /// assert!(query.contains("accuracyByLine"));
+    /// ```
     async fn accuracy_by_line(
         &self,
         ctx: &Context<'_>,
@@ -275,6 +317,23 @@ impl QueryRoot {
     /// Persisted log events, newest first. Counterpart of the
     /// `sendLogEvent` mutation. Requires the observer token.
     #[allow(clippy::too_many_arguments)] // flat filter args mirror accuracyByLine
+    /// Retrieves persisted log events matching the requested filters.
+    ///
+    /// Access requires event-history read authorization. The time range must be valid, and
+    /// the requested result limit is constrained by the history query limits.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let response = schema.execute(
+    ///     "{ logEvents(sessionId: \"session-1\", limit: 100) { id message } }",
+    /// ).await;
+    /// assert!(response.errors.is_empty());
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// The matching log events.
     async fn log_events(
         &self,
         ctx: &Context<'_>,
@@ -311,6 +370,30 @@ impl QueryRoot {
     /// Persisted interaction events, newest first. Counterpart of the
     /// `sendInteractionEvent` mutation. Requires the observer token.
     #[allow(clippy::too_many_arguments)] // flat filter args mirror accuracyByLine
+    /// Retrieves persisted interaction events matching the supplied filters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let query = r#"
+    ///     {
+    ///         interactionEvents(limit: 10) {
+    ///             id
+    ///             eventName
+    ///             timestamp
+    ///         }
+    ///     }
+    /// "#;
+    /// assert!(query.contains("interactionEvents"));
+    /// ```
+    ///
+    /// `session_id`, `device`, and `event_name` restrict the results when provided.
+    /// `from` and `to` define an optional time range, and `limit` controls the maximum
+    /// number of events returned.
+    ///
+    /// # Returns
+    ///
+    /// The matching interaction events.
     async fn interaction_events(
         &self,
         ctx: &Context<'_>,
@@ -342,6 +425,22 @@ impl QueryRoot {
     /// Persisted location updates, newest first. Counterpart of the
     /// `sendLocation` mutation. Requires the observer token.
     #[allow(clippy::too_many_arguments)] // flat filter args mirror accuracyByLine
+    /// Queries persisted location events using optional session, device, time-range,
+    /// line, and movement-state filters.
+    ///
+    /// # Returns
+    ///
+    /// The matching location events, up to the requested limit.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let request = async_graphql::Request::new(
+    ///     "{ locations(sessionId: \"session-1\", limit: 100) { id } }",
+    /// );
+    /// let response = schema.execute(request).await;
+    /// assert!(response.errors.is_empty());
+    /// ```
     async fn locations(
         &self,
         ctx: &Context<'_>,
@@ -372,8 +471,23 @@ impl QueryRoot {
     }
 }
 
-/// Shared setup for the raw history queries: enforces the observer read
-/// scope, validates the time range and resolves the storage handle.
+/// Prepares the validated filter used by raw history queries.
+///
+/// Requires read authorization, an enabled storage backend, and an ascending
+/// optional time range. The limit is clamped to the supported range.
+///
+/// # Errors
+///
+/// Returns an error when authorization or storage configuration is missing,
+/// history queries are disabled, or the time range is invalid.
+///
+/// # Examples
+///
+/// ```ignore
+/// let (storage, filter) = history_query(ctx, None, None, None, None, 100)?;
+/// assert!(storage.enabled());
+/// assert_eq!(filter.limit, 100);
+/// ```
 fn history_query<'a>(
     ctx: &'a Context<'_>,
     session_id: Option<String>,
@@ -502,9 +616,41 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
-    /// Submit a log event. Requires the events token or the telemetry token.
-    /// The event is broadcast to WebSocket subscribers and persisted when a
-    /// database is configured.
+    /// Submits a log event for authorized broadcast and persistence.
+    ///
+    /// The event is broadcast to telemetry subscribers and stored when persistence succeeds.
+    /// Validation or missing dependencies are reported as errors; broadcast and persistence
+    /// failures are logged while the submission response is still returned.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let response = schema.execute(async_graphql::Request::new(
+    ///     r#"mutation {
+    ///         sendLogEvent(input: {
+    ///             sessionId: "session-1"
+    ///             appVersion: "1.0.0"
+    ///             platform: WEB
+    ///             channel: APP
+    ///             timestamp: 0
+    ///             type: INFO
+    ///             level: INFO
+    ///             message: "Started"
+    ///         }) {
+    ///             sessionId
+    ///         }
+    ///     }"#,
+    /// )).await;
+    /// assert!(response.errors.is_empty());
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// * `input` — The log event data, including its session, application, timestamp, and message.
+    ///
+    /// # Returns
+    ///
+    /// The submitted event's session identifier.
     async fn send_log_event(
         &self,
         ctx: &Context<'_>,
@@ -569,12 +715,37 @@ impl MutationRoot {
         })
     }
 
-    /// Record a user-driven interaction identified by an arbitrary event
-    /// name (e.g. app launch, tab change, TTS request result). Unlike
-    /// sendLogEvent, which carries console.* output, this captures a named
-    /// user action. Requires the events token or the telemetry token. The
-    /// event is broadcast to WebSocket subscribers and persisted when a
-    /// database is configured.
+    /// Records a named user interaction for telemetry consumers and history queries.
+    ///
+    /// The interaction requires event-sending authorization. Empty session IDs, app
+    /// versions, and event names are rejected. The event is broadcast to subscribers
+    /// and stored when persistence succeeds.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let response = schema.execute(
+    ///     async_graphql::Request::new(
+    ///         r#"mutation {
+    ///             sendInteractionEvent(input: {
+    ///                 sessionId: "session-1",
+    ///                 appVersion: "1.0.0",
+    ///                 platform: IOS,
+    ///                 channel: APP,
+    ///                 timestamp: 1700000000000,
+    ///                 eventName: "app_launch"
+    ///             }) {
+    ///                 sessionId
+    ///             }
+    ///         }"#,
+    ///     ),
+    /// ).await;
+    /// assert!(response.errors.is_empty());
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// The submitted session ID.
     async fn send_interaction_event(
         &self,
         ctx: &Context<'_>,
@@ -636,10 +807,35 @@ impl MutationRoot {
         })
     }
 
-    /// Submit a location update. Requires the telemetry token; the events
-    /// token is deliberately not enough to publish positional data. The
-    /// update is annotated with segment information, broadcast to WebSocket
-    /// subscribers and persisted when a database is configured.
+    /// Publishes a validated location update with segment annotations.
+    ///
+    /// The update is broadcast to telemetry subscribers and persisted when storage is
+    /// available. Reported accuracy above the configured threshold produces a warning.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when authorization, required dependencies, or location data
+    /// are invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let result = schema.execute(
+    ///     async_graphql::Request::new(
+    ///         r#"mutation {
+    ///             sendLocation(input: {
+    ///                 sessionId: "session-1",
+    ///                 device: "device-1",
+    ///                 state: stationary,
+    ///                 lineId: "line-1",
+    ///                 coords: { latitude: 48.8566, longitude: 2.3522 },
+    ///                 timestamp: 1
+    ///             }) { sessionId warning }
+    ///         }"#,
+    ///     ),
+    /// ).await;
+    /// assert!(result.errors.is_empty());
+    /// ```
     async fn send_location(
         &self,
         ctx: &Context<'_>,
@@ -761,6 +957,22 @@ impl MutationRoot {
 }
 
 impl From<LineAccuracyBucketRow> for LineAccuracyBucket {
+    /// Converts a storage accuracy bucket into its GraphQL representation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let row = LineAccuracyBucketRow {
+    /// #     bucket_start: todo!(),
+    /// #     bucket_end: todo!(),
+    /// #     avg_accuracy: todo!(),
+    /// #     p90_accuracy: todo!(),
+    /// #     sample_count: todo!(),
+    /// #     avg_speed: todo!(),
+    /// #     max_speed: todo!(),
+    /// # };
+    /// let bucket: LineAccuracyBucket = row.into();
+    /// ```
     fn from(row: LineAccuracyBucketRow) -> Self {
         Self {
             bucket_start: row.bucket_start,
@@ -775,6 +987,17 @@ impl From<LineAccuracyBucketRow> for LineAccuracyBucket {
 }
 
 impl From<LogEventRow> for LogEvent {
+    /// Converts a stored log event row into its GraphQL representation.
+    ///
+    /// Invalid platform and channel values are represented as `None`, and negative
+    /// timestamps are converted to `0`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let event: LogEvent = row.into();
+    /// assert_eq!(event.message, "Application started");
+    /// ```
     fn from(row: LogEventRow) -> Self {
         Self {
             id: row.id.into(),
@@ -793,6 +1016,17 @@ impl From<LogEventRow> for LogEvent {
 }
 
 impl From<InteractionEventRow> for InteractionEvent {
+    /// Converts a stored interaction event row into its GraphQL representation.
+    ///
+    /// Invalid or negative timestamps become `0`, and properties that cannot be
+    /// deserialized into the expected shape become `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let event: InteractionEvent = row.into();
+    /// assert_eq!(event.event_name, "screen_view");
+    /// ```
     fn from(row: InteractionEventRow) -> Self {
         Self {
             id: row.id.into(),
@@ -812,6 +1046,16 @@ impl From<InteractionEventRow> for InteractionEvent {
 }
 
 impl From<LocationEventRow> for LocationEvent {
+    /// Converts a stored location event row into its GraphQL representation.
+    ///
+    /// Invalid movement or battery-state values are omitted, and negative timestamps become zero.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let event: LocationEvent = row.into();
+    /// assert_eq!(event.id, row.id.into());
+    /// ```
     fn from(row: LocationEventRow) -> Self {
         Self {
             id: row.id.into(),
@@ -837,6 +1081,19 @@ impl From<LocationEventRow> for LocationEvent {
     }
 }
 
+/// Calculates the number of time buckets needed to cover a time range.
+///
+/// # Examples
+///
+/// ```
+/// use chrono::{Duration, Utc};
+///
+/// let from = Utc::now();
+/// let to = from + Duration::seconds(61);
+///
+/// assert_eq!(estimate_bucket_count(from, to, 60), 2);
+/// ```
+fn estimate_bucket_count from? Wait output only docstring, not signature. Must omit signature. Example references function okay. Need include only comments. Also perhaps `bucket_seconds` positive implicit. final.
 fn estimate_bucket_count(from: DateTime<Utc>, to: DateTime<Utc>, bucket_seconds: i64) -> i64 {
     let span = to - from;
     let total_secs = span.num_seconds();
