@@ -76,7 +76,8 @@ pub struct LocationFreezeRow {
 pub struct LocationFreezeSessionRow {
     pub session_id: String,
     pub device: String,
-    pub line_id: Option<i32>,
+    /// Lines the session had location rows on inside the window, ascending.
+    pub line_ids: Vec<i32>,
     pub app_version: Option<String>,
     pub platform: Option<String>,
     pub channel: Option<String>,
@@ -119,13 +120,34 @@ pub struct LocationFreezeSummaryRow {
 /// manufacture gaps that never happened. The filters are applied afterwards, in
 /// `scoped`, against the row that precedes the gap.
 ///
+/// The same reasoning applies to the upper time bound. `candidate_sessions`
+/// picks the sessions that have at least one matching row inside `[from, to)`,
+/// `ordered` then reads *every* row of those sessions from `from` onwards — no
+/// upper bound — so a gap can be closed by a row that only arrives at or after
+/// `to`. Without that, `LEAD` would return NULL for the last row inside the
+/// window and a gap straddling the boundary would silently disappear. `scoped`
+/// restores the bound where it belongs: on the row that *starts* the gap
+/// (`o.timestamp < $2`), so the window still decides which gaps are reported
+/// and the per-window counts (`location_count`, `started_at`, `ended_at`) still
+/// only cover rows inside it.
+///
 /// Bind order, fixed for all three queries:
 /// `$1` from_ts, `$2` to_ts, `$3` session_id, `$4` line_id, `$5` segment_id,
 /// `$6` device, `$7` app_version, `$8` platform, `$9` channel,
 /// `$10` gap_threshold_ms, `$11` speed_threshold_kmh, `$12` require_app_alive,
 /// `$13` limit.
 const COMMON_CTE: &str = r#"
-WITH ordered AS (
+WITH candidate_sessions AS (
+  SELECT DISTINCT c.session_id
+  FROM location_logs c
+  WHERE c.session_id IS NOT NULL
+    AND c.timestamp >= $1::bigint AND c.timestamp < $2::bigint
+    AND ($3::text IS NULL OR c.session_id = $3)
+    AND ($4::int  IS NULL OR c.line_id = $4)
+    AND ($5::text IS NULL OR c.segment_id = $5)
+    AND ($6::text IS NULL OR c.device = $6)
+),
+ordered AS (
   SELECT l.session_id, l.device, l.line_id, l.segment_id, l.from_station_id, l.to_station_id,
          l.latitude, l.longitude, l.accuracy, l.speed, l.timestamp,
          l.app_version, l.platform, l.channel,
@@ -135,21 +157,20 @@ WITH ordered AS (
          LEAD(l.accuracy)  OVER w AS next_accuracy,
          LEAD(l.speed)     OVER w AS next_speed
   FROM location_logs l
-  WHERE l.session_id IS NOT NULL
-    AND l.timestamp >= $1::bigint AND l.timestamp < $2::bigint
-    AND ($3::text IS NULL OR l.session_id = $3)
+  WHERE l.session_id IN (SELECT session_id FROM candidate_sessions)
+    AND l.timestamp >= $1::bigint
   WINDOW w AS (PARTITION BY l.session_id ORDER BY l.timestamp)
 ),
 session_meta AS (
-  SELECT session_id, MIN(app_version) AS app_version, MIN(platform) AS platform, MIN(channel) AS channel
+  SELECT DISTINCT ON (e.session_id) e.session_id, e.app_version, e.platform, e.channel
   FROM (
-    SELECT session_id, app_version, platform, channel FROM log_events
-     WHERE session_id IN (SELECT DISTINCT session_id FROM ordered)
+    SELECT session_id, app_version, platform, channel, timestamp FROM log_events
+     WHERE session_id IN (SELECT session_id FROM candidate_sessions)
     UNION ALL
-    SELECT session_id, app_version, platform, channel FROM interaction_events
-     WHERE session_id IN (SELECT DISTINCT session_id FROM ordered)
+    SELECT session_id, app_version, platform, channel, timestamp FROM interaction_events
+     WHERE session_id IN (SELECT session_id FROM candidate_sessions)
   ) e
-  GROUP BY session_id
+  ORDER BY e.session_id, (e.app_version IS NULL), e.timestamp
 ),
 scoped AS (
   SELECT o.*,
@@ -157,7 +178,8 @@ scoped AS (
          COALESCE(o.platform,    m.platform)    AS eff_platform,
          COALESCE(o.channel,     m.channel)     AS eff_channel
   FROM ordered o LEFT JOIN session_meta m ON m.session_id = o.session_id
-  WHERE ($4::int  IS NULL OR o.line_id = $4)
+  WHERE o.timestamp < $2::bigint
+    AND ($4::int  IS NULL OR o.line_id = $4)
     AND ($5::text IS NULL OR o.segment_id = $5)
     AND ($6::text IS NULL OR o.device = $6)
     AND ($7::text IS NULL OR COALESCE(o.app_version, m.app_version) = $7)
@@ -213,28 +235,35 @@ LIMIT $13
 
 /// Tail of the per-session query. `session_stats` covers every session in the
 /// window, so sessions with zero freezes still show up.
+///
+/// A session is one row here even when it rode several lines: `line_id` would
+/// otherwise split the same ride into one row per line and each of those rows
+/// would report only part of the session. The lines are exposed as an array
+/// instead.
 const SESSIONS_TAIL: &str = r#"
 , session_stats AS (
-  SELECT s.session_id, s.device, s.line_id,
+  SELECT s.session_id, s.device,
          s.eff_app_version, s.eff_platform, s.eff_channel,
+         COALESCE(array_agg(DISTINCT s.line_id ORDER BY s.line_id)
+                    FILTER (WHERE s.line_id IS NOT NULL), '{}'::int[]) AS line_ids,
          MIN(s.timestamp)::bigint AS started_at,
          MAX(s.timestamp)::bigint AS ended_at,
          COUNT(*)::int AS location_count,
          MAX(s.speed) AS max_speed
   FROM scoped s
-  GROUP BY s.session_id, s.device, s.line_id, s.eff_app_version, s.eff_platform, s.eff_channel
+  GROUP BY s.session_id, s.device, s.eff_app_version, s.eff_platform, s.eff_channel
 ),
 session_freezes AS (
-  SELECT f.session_id, f.line_id,
+  SELECT f.session_id,
          COUNT(*)::int AS freeze_count,
          MAX(f.gap_ms)::bigint AS max_gap_ms,
          COALESCE(SUM(f.gap_ms), 0)::bigint AS total_gap_ms
   FROM freezes_alive f
-  GROUP BY f.session_id, f.line_id
+  GROUP BY f.session_id
 )
 SELECT s.session_id,
        s.device,
-       s.line_id,
+       s.line_ids,
        s.eff_app_version AS app_version,
        s.eff_platform    AS platform,
        s.eff_channel     AS channel,
@@ -246,9 +275,7 @@ SELECT s.session_id,
        f.max_gap_ms,
        COALESCE(f.total_gap_ms, 0)::bigint AS total_gap_ms
 FROM session_stats s
-LEFT JOIN session_freezes f
-       ON f.session_id = s.session_id
-      AND f.line_id IS NOT DISTINCT FROM s.line_id
+LEFT JOIN session_freezes f ON f.session_id = s.session_id
 ORDER BY s.started_at DESC
 LIMIT $13
 "#;
@@ -429,7 +456,7 @@ mod tests {
     fn common_cte_binds_are_shared_by_every_tail() {
         for tail in [FREEZES_TAIL, SESSIONS_TAIL, SUMMARY_TAIL] {
             let sql = freeze_sql(tail);
-            assert!(sql.starts_with("\nWITH ordered AS"));
+            assert!(sql.starts_with("\nWITH candidate_sessions AS"));
             assert!(sql.contains("freezes_alive"));
             // the limit is always the last bind parameter
             assert!(sql.contains("LIMIT $13"));
@@ -494,12 +521,21 @@ mod tests {
     }
 
     fn log_event(session_id: &str, ts: i64, app_version: &str) -> OutgoingLog {
+        log_event_on(session_id, ts, app_version, Platform::Ios)
+    }
+
+    fn log_event_on(
+        session_id: &str,
+        ts: i64,
+        app_version: &str,
+        platform: Platform,
+    ) -> OutgoingLog {
         OutgoingLog {
             id: Uuid::new_v4().to_string(),
             session_id: session_id.to_string(),
             device: None,
             app_version: app_version.to_string(),
-            platform: Platform::Ios,
+            platform,
             channel: Channel::Canary,
             timestamp: ts as u64,
             log: LogBody {
@@ -561,6 +597,8 @@ mod tests {
         let session_b = format!("b-{}", Uuid::new_v4());
         let session_c = format!("c-{}", Uuid::new_v4());
         let session_d = format!("d-{}", Uuid::new_v4());
+        let session_e = format!("e-{}", Uuid::new_v4());
+        let session_f = format!("f-{}", Uuid::new_v4());
 
         // Session A: 320 km/h, 30 s of 1 Hz rows, then a 300 s hole during
         // which only log events arrive, then rows resume 30 km further north.
@@ -613,6 +651,19 @@ mod tests {
             ))
             .await
             .expect("store session A interaction event");
+        // A later event from a different build. The backfill must take all
+        // three columns from the *first* event row rather than the minimum of
+        // each column, otherwise this row's platform ("android", which sorts
+        // before "ios") would be pasted onto 10.4.1(100).
+        storage
+            .store_log(&log_event_on(
+                &session_a,
+                BASE_TS + 400_000,
+                "10.4.9(999)",
+                Platform::Android,
+            ))
+            .await
+            .expect("store session A late log event");
 
         // Session B: the same segment on a newer build, no gap at all.
         for i in 0..120 {
@@ -685,6 +736,71 @@ mod tests {
                 .expect("store session D post-gap row");
         }
 
+        // Session E: the gap starts just inside the window but is only closed
+        // by a row that arrives after `to`. The freeze is real, so `LEAD` has
+        // to see past the upper bound of the search window.
+        for i in 0..10 {
+            storage
+                .store_location(&location(
+                    &session_e,
+                    &device,
+                    BASE_TS + 3_590_000 + i * 1_000,
+                    LAT0,
+                    Some(320.0),
+                    Some("10.4.5(104)"),
+                ))
+                .await
+                .expect("store session E pre-gap row");
+        }
+        storage
+            .store_location(&location(
+                &session_e,
+                &device,
+                BASE_TS + 3_900_000,
+                LAT0 + LAT_JUMP,
+                Some(320.0),
+                Some("10.4.5(104)"),
+            ))
+            .await
+            .expect("store session E post-window row");
+        // 3 log events strictly inside the gap (3 599 000 .. 3 900 000).
+        for k in 0..3 {
+            storage
+                .store_log(&log_event(
+                    &session_e,
+                    BASE_TS + 3_600_000 + k * 30_000,
+                    "10.4.5(104)",
+                ))
+                .await
+                .expect("store session E in-gap log event");
+        }
+
+        // Session F: the same shape at speed, but the session simply stops —
+        // no row ever closes the gap, so there is nothing to measure.
+        for i in 0..10 {
+            storage
+                .store_location(&location(
+                    &session_f,
+                    &device,
+                    BASE_TS + 3_590_000 + i * 1_000,
+                    LAT0,
+                    Some(320.0),
+                    Some("10.4.6(105)"),
+                ))
+                .await
+                .expect("store session F row");
+        }
+        for k in 0..3 {
+            storage
+                .store_log(&log_event(
+                    &session_f,
+                    BASE_TS + 3_600_000 + k * 30_000,
+                    "10.4.6(105)",
+                ))
+                .await
+                .expect("store session F post-window log event");
+        }
+
         // --- locationFreezes -------------------------------------------------
         let filter = base_filter(&device);
         let freezes = storage
@@ -692,12 +808,26 @@ mod tests {
             .await
             .expect("fetch freezes");
 
+        let ids: Vec<&str> = freezes.iter().map(|r| r.session_id.as_str()).collect();
         assert_eq!(
             freezes.len(),
-            1,
-            "only session A satisfies all three conditions"
+            2,
+            "sessions A and E satisfy all three conditions, got {ids:?}"
         );
-        let a = &freezes[0];
+        // newest gap first, so the boundary-crossing session E leads
+        let e = &freezes[0];
+        assert_eq!(e.session_id, session_e);
+        assert_eq!(e.gap_start, BASE_TS + 3_599_000);
+        assert_eq!(
+            e.gap_end,
+            BASE_TS + 3_900_000,
+            "the closing row lies past the window and must still be used"
+        );
+        assert_eq!(e.gap_ms, 301_000);
+        assert_eq!(e.alive_event_count, 3);
+        assert_eq!(e.app_version.as_deref(), Some("10.4.5(104)"));
+
+        let a = &freezes[1];
         assert_eq!(a.session_id, session_a);
         assert_eq!(a.gap_ms, 300_000);
         assert_eq!(a.gap_start, BASE_TS + 29_000);
@@ -730,16 +860,21 @@ mod tests {
             .await
             .expect("fetch freezes without the liveness requirement");
         let ids: Vec<&str> = freezes.iter().map(|r| r.session_id.as_str()).collect();
-        assert_eq!(freezes.len(), 2, "sessions A and D, got {ids:?}");
+        assert_eq!(freezes.len(), 3, "sessions A, D and E, got {ids:?}");
         assert!(ids.contains(&session_a.as_str()));
         assert!(ids.contains(&session_d.as_str()));
+        assert!(ids.contains(&session_e.as_str()));
+        assert!(
+            !ids.contains(&session_f.as_str()),
+            "a gap that never closes cannot be measured, got {ids:?}"
+        );
 
         // --- locationFreezeSessions -----------------------------------------
         let sessions = storage
             .fetch_location_freeze_sessions(&filter)
             .await
             .expect("fetch freeze sessions");
-        assert_eq!(sessions.len(), 4, "every session in the window is listed");
+        assert_eq!(sessions.len(), 6, "every session in the window is listed");
 
         let by_id = |id: &str| {
             sessions
@@ -754,8 +889,17 @@ mod tests {
         assert_eq!(row_a.location_count, 60);
         assert_eq!(row_a.started_at, BASE_TS);
         assert_eq!(row_a.ended_at, BASE_TS + 358_000);
+        // the first event row wins, and all three columns come from that one
+        // row: the later 10.4.9(999) / android event must not leak in
         assert_eq!(row_a.app_version.as_deref(), Some("10.4.1(100)"));
+        assert_eq!(row_a.platform.as_deref(), Some("ios"));
+        assert_eq!(row_a.channel.as_deref(), Some("canary"));
         assert_eq!(row_a.max_speed, Some(320.0));
+        assert_eq!(
+            row_a.line_ids,
+            vec![1],
+            "one row per session, lines rolled up"
+        );
 
         let row_b = by_id(&session_b);
         assert_eq!(row_b.freeze_count, 0);
@@ -764,15 +908,32 @@ mod tests {
         assert_eq!(row_b.location_count, 120);
         assert_eq!(row_b.app_version.as_deref(), Some("10.4.2(101)"));
 
+        assert_eq!(row_b.line_ids, vec![1]);
+
         assert_eq!(by_id(&session_c).freeze_count, 0);
         assert_eq!(by_id(&session_d).freeze_count, 0);
+
+        let row_e = by_id(&session_e);
+        assert_eq!(row_e.freeze_count, 1, "the gap crosses the window boundary");
+        assert_eq!(row_e.max_gap_ms, Some(301_000));
+        assert_eq!(row_e.total_gap_ms, 301_000);
+        assert_eq!(
+            row_e.location_count, 10,
+            "counts only cover rows inside the window"
+        );
+        assert_eq!(row_e.ended_at, BASE_TS + 3_599_000);
+        assert_eq!(row_e.line_ids, vec![1]);
+
+        let row_f = by_id(&session_f);
+        assert_eq!(row_f.freeze_count, 0);
+        assert_eq!(row_f.max_gap_ms, None);
 
         // --- locationFreezeSummary ------------------------------------------
         let summary = storage
             .fetch_location_freeze_summary(&filter)
             .await
             .expect("fetch freeze summary");
-        assert_eq!(summary.len(), 4, "one row per build on this segment");
+        assert_eq!(summary.len(), 6, "one row per build on this segment");
 
         let build = |v: &str| {
             summary
@@ -799,7 +960,27 @@ mod tests {
         assert_eq!(new.max_gap_ms, None);
         assert_eq!(new.total_gap_ms, 0);
 
-        // the worst group sorts first
-        assert_eq!(summary[0].app_version.as_deref(), Some("10.4.1(100)"));
+        let boundary = build("10.4.5(104)");
+        assert_eq!(boundary.freeze_session_count, 1);
+        assert_eq!(boundary.freeze_count, 1);
+        assert_eq!(boundary.location_count, 10);
+        assert_eq!(boundary.max_gap_ms, Some(301_000));
+
+        let never_closed = build("10.4.6(105)");
+        assert_eq!(never_closed.freeze_count, 0);
+        assert_eq!(never_closed.max_gap_ms, None);
+
+        // the worst groups sort first: both freezing builds lead the clean ones
+        assert_eq!(summary[0].freeze_count, 1);
+        assert_eq!(summary[1].freeze_count, 1);
+        let worst: Vec<&str> = summary[..2]
+            .iter()
+            .filter_map(|r| r.app_version.as_deref())
+            .collect();
+        assert!(
+            worst.contains(&"10.4.1(100)") && worst.contains(&"10.4.5(104)"),
+            "unexpected worst groups: {worst:?}"
+        );
+        assert_eq!(summary[2].freeze_count, 0);
     }
 }

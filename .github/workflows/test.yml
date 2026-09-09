@@ -1,0 +1,41 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: thq
+          POSTGRES_PASSWORD: thq
+          POSTGRES_DB: thq_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U thq -d thq_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup installs the toolchain pinned by rust-toolchain.toml on first
+      # use; this step makes the resolved version visible in the log.
+      - name: Show toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo test
+        env:
+          THQ_TEST_DATABASE_URL: postgres://thq:thq@localhost:5432/thq_test
+        run: cargo test

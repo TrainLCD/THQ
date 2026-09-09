@@ -263,7 +263,9 @@ pub struct LocationFreeze {
 pub struct LocationFreezeSession {
     pub session_id: String,
     pub device: String,
-    pub line_id: Option<i32>,
+    /// Lines the session had location rows on inside the window, ascending;
+    /// empty when every row lacked a line.
+    pub line_ids: Vec<i32>,
     pub app_version: Option<String>,
     pub platform: Option<Platform>,
     pub channel: Option<Channel>,
@@ -1451,7 +1453,7 @@ impl From<LocationFreezeSessionRow> for LocationFreezeSession {
         Self {
             session_id: row.session_id,
             device: row.device,
-            line_id: row.line_id,
+            line_ids: row.line_ids,
             app_version: row.app_version,
             platform: row.platform.as_deref().and_then(Platform::parse),
             channel: row.channel.as_deref().and_then(Channel::parse),

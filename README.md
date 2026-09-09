@@ -274,7 +274,7 @@ query {
 ```graphql
 query {
   locationFreezeSessions(filter: { from: "2026-07-01T00:00:00Z", to: "2026-07-02T00:00:00Z" }) {
-    sessionId device lineId appVersion platform channel
+    sessionId device lineIds appVersion platform channel
     startedAt endedAt locationCount maxSpeed
     freezeCount maxGapMs totalGapMs
   }
@@ -295,14 +295,14 @@ query {
 | Filter | Type | Description |
 |---|---|---|
 | `from` | `DateTime!` | Inclusive lower bound on the client-reported timestamp |
-| `to` | `DateTime!` | Exclusive upper bound; at most 90 days after `from` |
+| `to` | `DateTime!` | Exclusive upper bound; at most 90 days after `from`. It bounds the row that *starts* a gap: a gap whose closing row only arrives after `to` is still reported in full |
 | `lineId` / `segmentId` / `device` / `sessionId` | — | Matched against the row immediately before the gap |
 | `appVersion` / `platform` / `channel` | — | Build filters, applied after the per-session backfill |
 | `gapThresholdMs` | `Int` | Gap length that counts as a freeze candidate (default 60000, minimum 1000) |
 | `speedThresholdKmh` | `Float` | Minimum speed on the row before the gap (default 30) |
 | `requireAppAlive` | `Boolean` | Require log or interaction events inside the gap (default true) |
 
-`locationFreezes` returns one row per gap, newest first. `locationFreezeSessions` and `locationFreezeSummary` also return sessions and groups with **zero** freezes, so a build can be shown to be clean rather than merely absent from the results. Millisecond fields (`gapMs`, `maxGapMs`, `totalGapMs`) are `Int`.
+`locationFreezes` returns one row per gap, newest first. `locationFreezeSessions` returns exactly one row per session — a ride that crossed several lines is not split up, and the lines it touched are listed in `lineIds`. `locationFreezeSessions` and `locationFreezeSummary` also return sessions and groups with **zero** freezes, so a build can be shown to be clean rather than merely absent from the results. Their counts (`locationCount`, `startedAt`, `endedAt`) cover only rows inside `[from, to)`. Millisecond fields (`gapMs`, `maxGapMs`, `totalGapMs`) are `Int`.
 
 #### `accuracyByLine` — Aggregated accuracy report
 
@@ -461,6 +461,8 @@ THQ_TEST_DATABASE_URL=postgres://thq@127.0.0.1:5433/thq_test cargo test
 ```
 
 Each run uses freshly generated device and session identifiers and filters every query by that device, so it is safe to run against a shared scratch database and to run concurrently.
+
+CI runs the same suite against a `postgres:18` service container on every pull request and on pushes to `main` (`.github/workflows/test.yml`), so the PostgreSQL-backed tests actually execute there.
 
 ## Project structure
 
