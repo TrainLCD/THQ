@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: cargo test
@@ -27,6 +30,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # rustup installs the toolchain pinned by rust-toolchain.toml on first
       # use; this step makes the resolved version visible in the log.
