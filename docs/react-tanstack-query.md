@@ -12,15 +12,16 @@ thq-server の GraphQL API はエンドポイント `POST /graphql` で公開さ
 | `sendInteractionEvent` | Mutation | イベント用または遠隔測定用トークン |
 | `sendLocation` | Mutation | 遠隔測定用トークンのみ |
 | `logEvents` / `interactionEvents` / `locations` | Query | 観測用トークンのみ |
+| `locationFreezes` / `locationFreezeSessions` / `locationFreezeSummary` | Query | 観測用トークンのみ |
 | `accuracyByLine` | Query | 不要 |
 
-Mutation と履歴取得 Query の認証は `Authorization: Bearer <token>` ヘッダで行います。
+Mutation と履歴取得 Query、および現在地凍結検出 Query の認証は `Authorization: Bearer <token>` ヘッダで行います。凍結検出 Query の使い方は [location-freeze-regression.md](./location-freeze-regression.md) を参照してください。
 
 | トークン | できること |
 |---|---|
 | イベント用(`THQ_EVENTS_AUTH_TOKEN`) | `sendLogEvent` + `sendInteractionEvent` |
 | 遠隔測定用(`THQ_TELEMETRY_AUTH_TOKEN`) | `sendLogEvent` + `sendInteractionEvent` + `sendLocation` |
-| 観測用(`THQ_OBSERVER_AUTH_TOKEN`) | `logEvents` + `interactionEvents` + `locations`(+ WebSocket 購読) |
+| 観測用(`THQ_OBSERVER_AUTH_TOKEN`) | `logEvents` + `interactionEvents` + `locations` + `locationFreezes` + `locationFreezeSessions` + `locationFreezeSummary`(+ WebSocket 購読) |
 
 > **セキュリティ上の注意**: ブラウザ向けにビルドした JavaScript に埋め込んだトークンは、利用者全員から見えます。イベント用・遠隔測定用トークンを Web フロントエンドに直接埋め込むのは避け、ネイティブアプリや自前のバックエンド(BFF)経由で扱ってください。認証不要な `accuracyByLine` の表示だけであればトークンは一切不要です。
 

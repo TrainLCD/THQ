@@ -5,11 +5,12 @@ A telemetry server for [TrainLCD](https://github.com/TrainLCD). It provides real
 ## Features
 
 - **WebSocket** — Real-time broadcast of location updates, log events, and interaction events
-- **GraphQL** — Event ingestion (`sendLogEvent`, `sendInteractionEvent`, `sendLocation` mutations), history queries (`logEvents`, `interactionEvents`, `locations`) and aggregated per-line accuracy reports (`POST /graphql`)
+- **GraphQL** — Event ingestion (`sendLogEvent`, `sendInteractionEvent`, `sendLocation` mutations), history queries (`logEvents`, `interactionEvents`, `locations`), frozen-position detection (`locationFreezes`, `locationFreezeSessions`, `locationFreezeSummary`) and aggregated per-line accuracy reports (`POST /graphql`)
 - **PostgreSQL persistence** — Optionally stores all events in the database
 - **Ring buffer** — Keeps the latest N events in memory (default 1000)
 - **Scoped authentication** — Three shared secrets: observer (WebSocket + history queries), events (log + interaction submission), telemetry (log + interaction + location submission)
 - **Line topology** — Automatic segment annotation from a CSV topology file
+- **Freeze detection** — Finds location log gaps that look like a frozen position and compares them across builds (see [docs/location-freeze-regression.md](./docs/location-freeze-regression.md))
 
 ## Requirements
 
@@ -84,15 +85,15 @@ telemetry_auth_token = "change-me-telemetry"
 
 Three shared secrets grant exactly one role each:
 
-| Token | WebSocket subscribe | History queries (`logEvents` / `interactionEvents` / `locations`) | `sendLogEvent` / `sendInteractionEvent` | `sendLocation` |
-|---|---|---|---|---|
-| Observer | ✅ | ✅ | ❌ | ❌ |
-| Events | ❌ | ❌ | ✅ | ❌ |
-| Telemetry | ❌ | ❌ | ✅ | ✅ |
+| Token | WebSocket subscribe | History queries (`logEvents` / `interactionEvents` / `locations`) | Freeze queries (`locationFreezes` / `locationFreezeSessions` / `locationFreezeSummary`) | `sendLogEvent` / `sendInteractionEvent` | `sendLocation` |
+|---|---|---|---|---|---|
+| Observer | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Events | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Telemetry | ❌ | ❌ | ❌ | ✅ | ✅ |
 
 - **WebSocket** — send the observer token via subprotocols: `Sec-WebSocket-Protocol: thq, thq-auth-<token>`
 - **GraphQL mutations** — send the events or telemetry token via `Authorization: Bearer <token>`
-- **GraphQL history queries** — send the observer token via `Authorization: Bearer <token>`; raw event data is exposed only to the observation role that already sees it in real time over WebSocket
+- **GraphQL history and freeze queries** — send the observer token via `Authorization: Bearer <token>`; raw event data is exposed only to the observation role that already sees it in real time over WebSocket
 - **GraphQL aggregated queries** (`accuracyByLine`) — no authentication (aggregated data only)
 
 Authentication is always enforced. At least one token must be configured, or the server refuses to start.
@@ -168,6 +169,9 @@ mutation {
       speed: 45.0
     }
     timestamp: 1706000000000
+    appVersion: "1.2.3"    # optional — same value as sendLogEvent
+    platform: ios          # ios | android | macos | unknown
+    channel: production    # production | canary
   }) {
     sessionId
     warning   # set when e.g. the reported accuracy exceeds 100 m
@@ -176,6 +180,8 @@ mutation {
 ```
 
 `stationId` is only meaningful when `state` is `arrived` or `passing` and is ignored otherwise. `batteryLevel` (0.0–1.0) and `batteryState` (`unknown | unplugged | charging | full`) are optional.
+
+`appVersion` / `platform` / `channel` are optional for backwards compatibility with clients that predate them, and carry the same values the client already sends with `sendLogEvent`. Storing them on the location row lets the freeze queries group by build without joining `log_events`; a blank `appVersion` is rejected. For rows that lack them, the freeze queries fall back to the log and interaction events of the same session.
 
 #### `logEvents` / `interactionEvents` / `locations` — History queries
 
@@ -213,7 +219,7 @@ query {
     id sessionId device state stationId lineId
     coords { latitude longitude accuracy speed }
     timestamp segmentId fromStationId toStationId
-    batteryLevel batteryState recordedAt
+    batteryLevel batteryState appVersion platform channel recordedAt
   }
 }
 ```
@@ -231,6 +237,72 @@ Shared parameters (all optional):
 Per-query filters: `logEvents` also accepts `type` and `level`; `interactionEvents` accepts `eventName`; `locations` accepts `lineId` and `state`.
 
 Columns added to the storage schema over time are nullable in the results: legacy rows recorded before a column existed return `null` for it (e.g. `sessionId`, `appVersion`, or `lineId` on old rows). `recordedAt` is the server-side persistence time, while `timestamp` is the client-reported unix-millisecond value.
+
+#### `locationFreezes` / `locationFreezeSessions` / `locationFreezeSummary` — Frozen-position detection
+
+Finds stretches where the location log went silent while the app kept running and the device was moving fast — the signature of a position that stopped advancing on screen. All three require the **observer token** and a configured database, and all three take the same `LocationFreezeFilter`. The background, thresholds and known blind spots are documented in [docs/location-freeze-regression.md](./docs/location-freeze-regression.md).
+
+```graphql
+query {
+  locationFreezes(
+    filter: {
+      from: "2026-07-01T00:00:00Z"   # required, client-reported timestamp
+      to: "2026-07-02T00:00:00Z"     # required, at most 90 days after from
+      lineId: 11302                  # every other filter is optional
+      segmentId: "11302:1130201:1130202"
+      device: "device-001"
+      sessionId: "d0f7..."
+      appVersion: "10.4.1(100)"
+      platform: ios
+      channel: canary
+      gapThresholdMs: 60000          # default 60000, minimum 1000
+      speedThresholdKmh: 30          # default 30
+      requireAppAlive: true          # default true
+    }
+    limit: 100                       # default 100, cap 2000
+  ) {
+    sessionId device lineId segmentId fromStationId toStationId
+    appVersion platform channel
+    gapStart gapEnd gapMs speedBeforeGap
+    coordsBeforeGap { latitude longitude accuracy speed }
+    coordsAfterGap { latitude longitude accuracy speed }
+    jumpDistanceMeters aliveEventCount
+  }
+}
+```
+
+```graphql
+query {
+  locationFreezeSessions(filter: { from: "2026-07-01T00:00:00Z", to: "2026-07-02T00:00:00Z" }) {
+    sessionId device lineId appVersion platform channel
+    startedAt endedAt locationCount maxSpeed
+    freezeCount maxGapMs totalGapMs
+  }
+}
+```
+
+```graphql
+query {
+  locationFreezeSummary(filter: { from: "2026-07-01T00:00:00Z", to: "2026-07-02T00:00:00Z" }) {
+    lineId segmentId fromStationId toStationId device
+    appVersion platform channel
+    sessionCount locationCount
+    freezeSessionCount freezeCount maxGapMs totalGapMs
+  }
+}
+```
+
+| Filter | Type | Description |
+|---|---|---|
+| `from` | `DateTime!` | Inclusive lower bound on the client-reported timestamp |
+| `to` | `DateTime!` | Exclusive upper bound; at most 90 days after `from` |
+| `lineId` / `segmentId` / `device` / `sessionId` | — | Matched against the row immediately before the gap |
+| `appVersion` / `platform` / `channel` | — | Build filters, applied after the per-session backfill |
+| `gapThresholdMs` | `Int` | Gap length that counts as a freeze candidate (default 60000, minimum 1000) |
+| `speedThresholdKmh` | `Float` | Minimum speed on the row before the gap (default 30) |
+| `requireAppAlive` | `Boolean` | Require log or interaction events inside the gap (default true) |
+
+`locationFreezes` returns one row per gap, newest first. `locationFreezeSessions` and `locationFreezeSummary` also return sessions and groups with **zero** freezes, so a build can be shown to be clean rather than merely absent from the results. Millisecond fields (`gapMs`, `maxGapMs`, `totalGapMs`) are `Int`.
 
 #### `accuracyByLine` — Aggregated accuracy report
 
@@ -365,11 +437,30 @@ When `database_url` / `DATABASE_URL` is provided, the server connects to Postgre
 
 | Table | Key columns |
 |---|---|
-| `location_logs` | `id`, `session_id`, `device`, `state`, `station_id`, `line_id`, `segment_id`, `from_station_id`, `to_station_id`, `latitude`, `longitude`, `accuracy`, `speed`, `battery_level`, `battery_state`, `timestamp`, `recorded_at` |
+| `location_logs` | `id`, `session_id`, `device`, `state`, `station_id`, `line_id`, `segment_id`, `from_station_id`, `to_station_id`, `latitude`, `longitude`, `accuracy`, `speed`, `battery_level`, `battery_state`, `app_version`, `platform`, `channel`, `timestamp`, `recorded_at` |
 | `log_events` | `id`, `session_id`, `device`, `app_version`, `platform`, `channel`, `log_type`, `log_level`, `message`, `timestamp`, `recorded_at` |
 | `interaction_events` | `id`, `session_id`, `device`, `app_version`, `platform`, `channel`, `properties` (JSONB), `event_name`, `timestamp`, `recorded_at` |
 
 Without a `database_url` the server still accepts WebSocket traffic but does not persist messages.
+
+## Testing
+
+```bash
+# Unit tests only; the PostgreSQL-backed tests skip themselves
+cargo test
+
+# Formatting and lints
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+```
+
+The freeze queries also have an integration test that runs against a real PostgreSQL instance. It is skipped unless `THQ_TEST_DATABASE_URL` points at a database the test may create tables in:
+
+```bash
+THQ_TEST_DATABASE_URL=postgres://thq@127.0.0.1:5433/thq_test cargo test
+```
+
+Each run uses freshly generated device and session identifiers and filters every query by that device, so it is safe to run against a shared scratch database and to run concurrently.
 
 ## Project structure
 
@@ -382,6 +473,7 @@ src/
 ├── domain.rs     # Domain model definitions
 ├── storage.rs    # PostgreSQL persistence layer
 ├── graphql.rs    # GraphQL schema & resolvers
+├── freeze.rs     # Frozen-position detection queries
 ├── segment.rs    # Line topology & segment inference
 └── static/
     └── join.csv  # Line topology data

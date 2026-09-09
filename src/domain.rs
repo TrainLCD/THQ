@@ -348,6 +348,12 @@ pub struct OutgoingLocation {
     pub to_station_id: Option<i32>,
     pub battery_level: Option<f64>,
     pub battery_state: Option<BatteryState>,
+    /// Build metadata mirrored from the log/interaction payloads so freeze
+    /// detection can group location rows by build without a join (THQ#30).
+    /// `None` for clients that predate the field.
+    pub app_version: Option<String>,
+    pub platform: Option<Platform>,
+    pub channel: Option<Channel>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -507,11 +513,17 @@ mod tests {
             to_station_id: None,
             battery_level: None,
             battery_state: None,
+            app_version: Some("10.4.2(101)".into()),
+            platform: Some(Platform::Ios),
+            channel: Some(Channel::Production),
         });
 
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "location_update");
         assert_eq!(json["device"], "dev");
         assert_eq!(json["coords"]["speed"], 3.0);
+        assert_eq!(json["app_version"], "10.4.2(101)");
+        assert_eq!(json["platform"], "ios");
+        assert_eq!(json["channel"], "production");
     }
 }
