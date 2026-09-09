@@ -83,6 +83,11 @@ pub struct LocationEventRow {
     pub timestamp: i64,
     pub battery_level: Option<f64>,
     pub battery_state: Option<i16>,
+    /// Build metadata added by THQ#30; NULL on rows written before the
+    /// column existed or by clients that do not send it yet.
+    pub app_version: Option<String>,
+    pub platform: Option<String>,
+    pub channel: Option<String>,
     pub recorded_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
 }
 
@@ -115,6 +120,18 @@ impl Storage {
 
     pub fn enabled(&self) -> bool {
         self.pool.is_some()
+    }
+
+    /// Borrows the configured connection pool for query modules that build
+    /// their own SQL (see `crate::freeze`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no database is configured.
+    pub(crate) fn pool(&self) -> anyhow::Result<&PgPool> {
+        self.pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("database is not configured"))
     }
 
     /// Initializes the configured database schema and required indexes.
@@ -153,6 +170,9 @@ impl Storage {
                 timestamp BIGINT NOT NULL,
                 battery_level DOUBLE PRECISION,
                 battery_state SMALLINT,
+                app_version TEXT,
+                platform TEXT,
+                channel TEXT,
                 recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
             "#,
@@ -189,6 +209,17 @@ impl Storage {
             .execute(pool)
             .await?;
         sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS session_id TEXT;")
+            .execute(pool)
+            .await?;
+        // THQ#30: build metadata on location rows so freeze detection can group
+        // by build without joining log_events.
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS app_version TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS platform TEXT;")
+            .execute(pool)
+            .await?;
+        sqlx::query("ALTER TABLE location_logs ADD COLUMN IF NOT EXISTS channel TEXT;")
             .execute(pool)
             .await?;
 
@@ -315,6 +346,26 @@ impl Storage {
         .execute(pool)
         .await?;
 
+        // THQ#30: the freeze queries walk each session in timestamp order and
+        // count the events that fall inside a gap.
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_location_logs_session_timestamp ON location_logs (session_id, timestamp);",
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_log_events_session_timestamp ON log_events (session_id, timestamp);",
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_events_session_timestamp ON interaction_events (session_id, timestamp);",
+        )
+        .execute(pool)
+        .await?;
+
         Ok(())
     }
 
@@ -342,7 +393,7 @@ impl Storage {
         let ts = i64::try_from(loc.timestamp).unwrap_or(i64::MAX);
 
         sqlx::query(
-            "INSERT INTO location_logs (id, session_id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp, battery_level, battery_state) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO location_logs (id, session_id, device, state, station_id, line_id, segment_id, from_station_id, to_station_id, latitude, longitude, accuracy, speed, timestamp, battery_level, battery_state, app_version, platform, channel) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) ON CONFLICT (id) DO NOTHING",
         )
         .bind(&loc.id)
         .bind(&loc.session_id)
@@ -360,6 +411,9 @@ impl Storage {
         .bind(ts)
         .bind(loc.battery_level)
         .bind(loc.battery_state.as_ref().map(battery_state_i16))
+        .bind(&loc.app_version)
+        .bind(loc.platform.map(|p| p.as_str()))
+        .bind(loc.channel.map(|c| c.as_str()))
         .execute(pool)
         .await
         .context("failed to insert location log")?;
@@ -696,7 +750,8 @@ impl Storage {
             SELECT id, session_id, device, state, station_id, line_id,
                    segment_id, from_station_id, to_station_id,
                    latitude, longitude, accuracy, speed,
-                   timestamp, battery_level, battery_state, recorded_at
+                   timestamp, battery_level, battery_state,
+                   app_version, platform, channel, recorded_at
             FROM location_logs
             WHERE ($1::text IS NULL OR session_id = $1)
               AND ($2::text IS NULL OR device = $2)

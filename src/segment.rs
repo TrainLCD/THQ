@@ -509,6 +509,9 @@ mod tests {
             to_station_id: None,
             battery_level: None,
             battery_state: None,
+            app_version: None,
+            platform: None,
+            channel: None,
         };
 
         let second = OutgoingLocation {
@@ -549,6 +552,9 @@ mod tests {
             to_station_id: None,
             battery_level: None,
             battery_state: None,
+            app_version: None,
+            platform: None,
+            channel: None,
         };
 
         let second = OutgoingLocation {
@@ -654,6 +660,9 @@ mod tests {
             to_station_id: None,
             battery_level: None,
             battery_state: None,
+            app_version: None,
+            platform: None,
+            channel: None,
         };
 
         // first annotate stores track
@@ -696,6 +705,9 @@ mod tests {
             to_station_id: None,
             battery_level: None,
             battery_state: None,
+            app_version: None,
+            platform: None,
+            channel: None,
         };
 
         let annotated = estimator.annotate(loc).await;

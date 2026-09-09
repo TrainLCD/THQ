@@ -12,6 +12,10 @@ use crate::{
         BatteryState, Channel, LogBody, LogLevel, LogType, MovementState, OutgoingCoords,
         OutgoingInteraction, OutgoingLocation, OutgoingLog, OutgoingMessage, Platform, Properties,
     },
+    freeze::{
+        haversine_meters, LocationFreezeQuery, LocationFreezeRow, LocationFreezeSessionRow,
+        LocationFreezeSummaryRow,
+    },
     segment::SegmentEstimator,
     state::TelemetryHub,
     storage::{
@@ -39,6 +43,14 @@ pub struct RequestAuth {
 }
 
 const HARD_LIMIT: i32 = 2000;
+
+/// Widest range the freeze queries accept, mirroring the `hour` bucket cap of
+/// `accuracyByLine`.
+const FREEZE_MAX_SPAN_DAYS: i64 = 90;
+
+/// The app sends at most one location per second, so anything below this would
+/// flag ordinary jitter rather than a freeze.
+const FREEZE_MIN_GAP_THRESHOLD_MS: i32 = 1000;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq, Debug)]
 #[graphql(rename_items = "lowercase")]
@@ -170,8 +182,128 @@ pub struct LocationEvent {
     /// Battery level as a decimal (0.0 to 1.0).
     pub battery_level: Option<f64>,
     pub battery_state: Option<BatteryState>,
+    /// Build metadata reported alongside the position. Null for rows written
+    /// before the columns existed or by clients that do not send them.
+    pub app_version: Option<String>,
+    pub platform: Option<Platform>,
+    pub channel: Option<Channel>,
     /// Server-side time the event was persisted.
     pub recorded_at: DateTime<Utc>,
+}
+
+/// Filters shared by `locationFreezes`, `locationFreezeSessions` and
+/// `locationFreezeSummary`. See `docs/location-freeze-regression.md`.
+#[derive(InputObject)]
+pub struct LocationFreezeFilter {
+    /// Inclusive lower bound on the client-reported timestamp.
+    pub from: DateTime<Utc>,
+    /// Exclusive upper bound on the client-reported timestamp. At most 90 days
+    /// after `from`.
+    pub to: DateTime<Utc>,
+    pub line_id: Option<i32>,
+    /// Server-assigned segment ID, matched against the row before the gap.
+    pub segment_id: Option<String>,
+    pub device: Option<String>,
+    pub session_id: Option<String>,
+    pub app_version: Option<String>,
+    pub platform: Option<Platform>,
+    pub channel: Option<Channel>,
+    /// A location gap longer than this many milliseconds counts as a freeze
+    /// candidate. The app sends at most one location per second, so the default
+    /// of 60 000 is already two orders of magnitude above normal jitter.
+    #[graphql(default = 60000)]
+    pub gap_threshold_ms: i32,
+    /// Only gaps whose preceding row reported a speed (km/h) above this count,
+    /// which is what separates a freeze from a stop at a station.
+    #[graphql(default = 30.0)]
+    pub speed_threshold_kmh: f64,
+    /// When true (the default), a gap only counts if the same session kept
+    /// submitting log or interaction events while the position was missing —
+    /// evidence that the app itself did not die.
+    #[graphql(default = true)]
+    pub require_app_alive: bool,
+}
+
+/// A single location log gap that matches the freeze signature.
+#[derive(SimpleObject, Clone)]
+pub struct LocationFreeze {
+    pub session_id: String,
+    pub device: String,
+    pub line_id: Option<i32>,
+    pub segment_id: Option<String>,
+    pub from_station_id: Option<i32>,
+    pub to_station_id: Option<i32>,
+    /// Taken from `location_logs`, falling back to the log / interaction events
+    /// of the same session; null when neither carries it.
+    pub app_version: Option<String>,
+    pub platform: Option<Platform>,
+    pub channel: Option<Channel>,
+    /// Client timestamp of the last row before the gap.
+    pub gap_start: DateTime<Utc>,
+    /// Client timestamp of the first row after the gap.
+    pub gap_end: DateTime<Utc>,
+    /// Length of the gap in milliseconds.
+    pub gap_ms: u64,
+    /// Speed (km/h) reported on the row before the gap.
+    pub speed_before_gap: f64,
+    /// Coordinates of the row before the gap, i.e. where the display froze.
+    pub coords_before_gap: Coords,
+    /// Coordinates of the first row after the gap.
+    pub coords_after_gap: Coords,
+    /// Great-circle distance in meters between the two rows above: roughly how
+    /// far the displayed position had drifted from reality.
+    pub jump_distance_meters: f64,
+    /// Log + interaction events of the same session inside the gap.
+    pub alive_event_count: i32,
+}
+
+/// Per-session rollup. Sessions with zero freezes are included so two builds
+/// that rode the same segment can be compared side by side.
+#[derive(SimpleObject, Clone)]
+pub struct LocationFreezeSession {
+    pub session_id: String,
+    pub device: String,
+    /// Lines the session had location rows on inside the window, ascending;
+    /// empty when every row lacked a line.
+    pub line_ids: Vec<i32>,
+    pub app_version: Option<String>,
+    pub platform: Option<Platform>,
+    pub channel: Option<Channel>,
+    /// Client timestamp of the session's first row inside the window.
+    pub started_at: DateTime<Utc>,
+    /// Client timestamp of the session's last row inside the window.
+    pub ended_at: DateTime<Utc>,
+    pub location_count: i32,
+    pub max_speed: Option<f64>,
+    pub freeze_count: i32,
+    /// Null when the session has no freeze.
+    pub max_gap_ms: Option<u64>,
+    /// Zero when the session has no freeze.
+    pub total_gap_ms: u64,
+}
+
+/// Rollup by line, segment, device and build. Groups with zero freezes are
+/// included, so a build can be shown to be clean rather than merely absent.
+#[derive(SimpleObject, Clone)]
+pub struct LocationFreezeSummary {
+    pub line_id: Option<i32>,
+    pub segment_id: Option<String>,
+    pub from_station_id: Option<i32>,
+    pub to_station_id: Option<i32>,
+    pub device: String,
+    pub app_version: Option<String>,
+    pub platform: Option<Platform>,
+    pub channel: Option<Channel>,
+    /// Sessions with at least one location row in this group.
+    pub session_count: i32,
+    pub location_count: i32,
+    /// Sessions in this group with at least one freeze.
+    pub freeze_session_count: i32,
+    pub freeze_count: i32,
+    /// Null when the group has no freeze.
+    pub max_gap_ms: Option<u64>,
+    /// Zero when the group has no freeze.
+    pub total_gap_ms: u64,
 }
 
 /// Builds the application GraphQL schema with storage, telemetry, and segment-estimation dependencies.
@@ -469,6 +601,169 @@ impl QueryRoot {
 
         Ok(rows.into_iter().map(LocationEvent::from).collect())
     }
+
+    /// Location log gaps that match the frozen-position signature, newest gap
+    /// first. Requires the observer token and a configured database.
+    ///
+    /// See `docs/location-freeze-regression.md` for the three conditions and
+    /// for the gaps this deliberately cannot see (a gap whose closing row falls
+    /// outside the window, and a session that never comes back).
+    async fn location_freezes(
+        &self,
+        ctx: &Context<'_>,
+        filter: LocationFreezeFilter,
+        #[graphql(default = 100)] limit: i32,
+    ) -> Result<Vec<LocationFreeze>> {
+        let (storage, query) = freeze_query(ctx, filter, limit)?;
+
+        let started = Instant::now();
+        let rows = storage
+            .fetch_location_freezes(&query)
+            .await
+            .map_err(|e| format!("failed to fetch location freezes: {e}"))?;
+
+        info!(
+            count = rows.len(),
+            limit = query.limit,
+            gap_threshold_ms = query.gap_threshold_ms,
+            speed_threshold_kmh = query.speed_threshold_kmh,
+            require_app_alive = query.require_app_alive,
+            duration_ms = started.elapsed().as_millis(),
+            "locationFreezes resolver completed"
+        );
+
+        Ok(rows.into_iter().map(LocationFreeze::from).collect())
+    }
+
+    /// Per-session freeze rollup, newest session first. Sessions without a
+    /// freeze are included. Requires the observer token.
+    async fn location_freeze_sessions(
+        &self,
+        ctx: &Context<'_>,
+        filter: LocationFreezeFilter,
+        #[graphql(default = 100)] limit: i32,
+    ) -> Result<Vec<LocationFreezeSession>> {
+        let (storage, query) = freeze_query(ctx, filter, limit)?;
+
+        let started = Instant::now();
+        let rows = storage
+            .fetch_location_freeze_sessions(&query)
+            .await
+            .map_err(|e| format!("failed to fetch location freeze sessions: {e}"))?;
+
+        info!(
+            count = rows.len(),
+            limit = query.limit,
+            gap_threshold_ms = query.gap_threshold_ms,
+            speed_threshold_kmh = query.speed_threshold_kmh,
+            require_app_alive = query.require_app_alive,
+            duration_ms = started.elapsed().as_millis(),
+            "locationFreezeSessions resolver completed"
+        );
+
+        Ok(rows.into_iter().map(LocationFreezeSession::from).collect())
+    }
+
+    /// Freeze rollup by line, segment, device and build, worst group first.
+    /// Groups without a freeze are included. Requires the observer token.
+    async fn location_freeze_summary(
+        &self,
+        ctx: &Context<'_>,
+        filter: LocationFreezeFilter,
+        #[graphql(default = 100)] limit: i32,
+    ) -> Result<Vec<LocationFreezeSummary>> {
+        let (storage, query) = freeze_query(ctx, filter, limit)?;
+
+        let started = Instant::now();
+        let rows = storage
+            .fetch_location_freeze_summary(&query)
+            .await
+            .map_err(|e| format!("failed to fetch location freeze summary: {e}"))?;
+
+        info!(
+            count = rows.len(),
+            limit = query.limit,
+            gap_threshold_ms = query.gap_threshold_ms,
+            speed_threshold_kmh = query.speed_threshold_kmh,
+            require_app_alive = query.require_app_alive,
+            duration_ms = started.elapsed().as_millis(),
+            "locationFreezeSummary resolver completed"
+        );
+
+        Ok(rows.into_iter().map(LocationFreezeSummary::from).collect())
+    }
+}
+
+/// Prepares the validated filter shared by the three freeze queries.
+///
+/// Applies the same observer-token and storage checks as `history_query`, then
+/// the freeze-specific range and threshold rules.
+///
+/// # Errors
+///
+/// Returns an error when authorization or storage configuration is missing,
+/// history queries are disabled, the range is inverted or wider than 90 days,
+/// or a threshold is out of range.
+fn freeze_query<'a>(
+    ctx: &'a Context<'_>,
+    filter: LocationFreezeFilter,
+    limit: i32,
+) -> Result<(&'a Storage, LocationFreezeQuery)> {
+    let auth = ctx
+        .data::<RequestAuth>()
+        .map_err(|_| "auth context is missing")?;
+    if !auth.can_read_events {
+        return Err("unauthorized: a valid observer bearer token is required".into());
+    }
+
+    if filter.from >= filter.to {
+        return Err("from must be earlier than to".into());
+    }
+
+    let max_span = ChronoDuration::days(FREEZE_MAX_SPAN_DAYS);
+    if filter.to - filter.from > max_span {
+        return Err(format!(
+            "requested span exceeds maximum for location freeze queries: max {} days",
+            max_span.num_days()
+        )
+        .into());
+    }
+
+    if filter.gap_threshold_ms < FREEZE_MIN_GAP_THRESHOLD_MS {
+        return Err(
+            format!("gapThresholdMs must be at least {FREEZE_MIN_GAP_THRESHOLD_MS}").into(),
+        );
+    }
+
+    if !filter.speed_threshold_kmh.is_finite() || filter.speed_threshold_kmh < 0.0 {
+        return Err("speedThresholdKmh must be a finite value >= 0".into());
+    }
+
+    let storage = ctx
+        .data::<Storage>()
+        .map_err(|_| "storage is not configured; DATABASE_URL is required")?;
+    if !storage.enabled() {
+        return Err("database-backed storage is disabled; history queries are unavailable".into());
+    }
+
+    Ok((
+        storage,
+        LocationFreezeQuery {
+            from_ts: filter.from.timestamp_millis(),
+            to_ts: filter.to.timestamp_millis(),
+            session_id: filter.session_id,
+            line_id: filter.line_id,
+            segment_id: filter.segment_id,
+            device: filter.device,
+            app_version: filter.app_version,
+            platform: filter.platform.map(|p| p.as_str().to_string()),
+            channel: filter.channel.map(|c| c.as_str().to_string()),
+            gap_threshold_ms: i64::from(filter.gap_threshold_ms),
+            speed_threshold_kmh: filter.speed_threshold_kmh,
+            require_app_alive: filter.require_app_alive,
+            limit: limit.clamp(1, HARD_LIMIT),
+        },
+    ))
 }
 
 /// Prepares the validated filter used by raw history queries.
@@ -603,6 +898,12 @@ pub struct LocationEventInput {
     /// Battery level as a decimal (0.0 to 1.0).
     pub battery_level: Option<f64>,
     pub battery_state: Option<BatteryState>,
+    /// Application version string (e.g. "1.2.3"), same value as the one sent
+    /// with `sendLogEvent`. Optional for backwards compatibility with clients
+    /// that predate it; a blank string is rejected.
+    pub app_version: Option<String>,
+    pub platform: Option<Platform>,
+    pub channel: Option<Channel>,
 }
 
 #[derive(SimpleObject)]
@@ -885,6 +1186,12 @@ impl MutationRoot {
             }
         }
 
+        if let Some(version) = &input.app_version {
+            if version.trim().is_empty() {
+                return Err("appVersion must not be blank".into());
+            }
+        }
+
         // station_id is only meaningful when not moving/approaching
         let station_id = if matches!(
             input.state,
@@ -924,6 +1231,9 @@ impl MutationRoot {
             to_station_id: None,
             battery_level: input.battery_level,
             battery_state: input.battery_state,
+            app_version: input.app_version,
+            platform: input.platform,
+            channel: input.channel,
         };
 
         let loc = segmenter.annotate(loc).await;
@@ -1076,7 +1386,105 @@ impl From<LocationEventRow> for LocationEvent {
             to_station_id: row.to_station_id,
             battery_level: row.battery_level,
             battery_state: row.battery_state.and_then(BatteryState::from_i16),
+            app_version: row.app_version,
+            platform: row.platform.as_deref().and_then(Platform::parse),
+            channel: row.channel.as_deref().and_then(Channel::parse),
             recorded_at: row.recorded_at,
+        }
+    }
+}
+
+/// Converts a client-reported unix-millisecond timestamp into a `DateTime`,
+/// falling back to the epoch for values outside the representable range.
+fn millis_to_datetime(millis: i64) -> DateTime<Utc> {
+    DateTime::from_timestamp_millis(millis).unwrap_or_else(|| DateTime::from_timestamp_nanos(0))
+}
+
+/// Converts a non-negative millisecond count into the `u64` the schema exposes.
+/// The values come from `MAX`/`SUM` over timestamp differences, so a negative
+/// result would mean corrupt data; degrade to zero rather than fail the query.
+fn millis_to_u64(millis: i64) -> u64 {
+    u64::try_from(millis).unwrap_or(0)
+}
+
+impl From<LocationFreezeRow> for LocationFreeze {
+    fn from(row: LocationFreezeRow) -> Self {
+        let jump_distance_meters = haversine_meters(
+            row.lat_before_gap,
+            row.lon_before_gap,
+            row.lat_after_gap,
+            row.lon_after_gap,
+        );
+
+        Self {
+            session_id: row.session_id,
+            device: row.device,
+            line_id: row.line_id,
+            segment_id: row.segment_id,
+            from_station_id: row.from_station_id,
+            to_station_id: row.to_station_id,
+            app_version: row.app_version,
+            platform: row.platform.as_deref().and_then(Platform::parse),
+            channel: row.channel.as_deref().and_then(Channel::parse),
+            gap_start: millis_to_datetime(row.gap_start),
+            gap_end: millis_to_datetime(row.gap_end),
+            gap_ms: millis_to_u64(row.gap_ms),
+            speed_before_gap: row.speed_before_gap,
+            coords_before_gap: Coords {
+                latitude: row.lat_before_gap,
+                longitude: row.lon_before_gap,
+                accuracy: row.accuracy_before_gap,
+                speed: Some(row.speed_before_gap),
+            },
+            coords_after_gap: Coords {
+                latitude: row.lat_after_gap,
+                longitude: row.lon_after_gap,
+                accuracy: row.accuracy_after_gap,
+                speed: row.speed_after_gap,
+            },
+            jump_distance_meters,
+            alive_event_count: row.alive_event_count,
+        }
+    }
+}
+
+impl From<LocationFreezeSessionRow> for LocationFreezeSession {
+    fn from(row: LocationFreezeSessionRow) -> Self {
+        Self {
+            session_id: row.session_id,
+            device: row.device,
+            line_ids: row.line_ids,
+            app_version: row.app_version,
+            platform: row.platform.as_deref().and_then(Platform::parse),
+            channel: row.channel.as_deref().and_then(Channel::parse),
+            started_at: millis_to_datetime(row.started_at),
+            ended_at: millis_to_datetime(row.ended_at),
+            location_count: row.location_count,
+            max_speed: row.max_speed,
+            freeze_count: row.freeze_count,
+            max_gap_ms: row.max_gap_ms.map(millis_to_u64),
+            total_gap_ms: millis_to_u64(row.total_gap_ms),
+        }
+    }
+}
+
+impl From<LocationFreezeSummaryRow> for LocationFreezeSummary {
+    fn from(row: LocationFreezeSummaryRow) -> Self {
+        Self {
+            line_id: row.line_id,
+            segment_id: row.segment_id,
+            from_station_id: row.from_station_id,
+            to_station_id: row.to_station_id,
+            device: row.device,
+            app_version: row.app_version,
+            platform: row.platform.as_deref().and_then(Platform::parse),
+            channel: row.channel.as_deref().and_then(Channel::parse),
+            session_count: row.session_count,
+            location_count: row.location_count,
+            freeze_session_count: row.freeze_session_count,
+            freeze_count: row.freeze_count,
+            max_gap_ms: row.max_gap_ms.map(millis_to_u64),
+            total_gap_ms: millis_to_u64(row.total_gap_ms),
         }
     }
 }
@@ -1133,6 +1541,29 @@ mod tests {
 
     fn request(query: &str, auth: RequestAuth) -> async_graphql::Request {
         async_graphql::Request::new(query.to_string()).data(auth)
+    }
+
+    /// A syntactically valid freeze query with the supplied extra filter
+    /// fields, so the tests exercise the resolver rather than schema parsing.
+    fn freeze_query_str(field: &str, selection: &str, extra: &str) -> String {
+        format!(
+            r#"query {{
+                {field}(filter: {{
+                    from: "2026-07-01T00:00:00Z",
+                    to: "2026-07-02T00:00:00Z"{extra}
+                }}) {{ {selection} }}
+            }}"#
+        )
+    }
+
+    /// The three freeze queries with a valid filter, for the shared
+    /// authorization and storage checks.
+    fn freeze_queries() -> [String; 3] {
+        [
+            freeze_query_str("locationFreezes", "sessionId", ""),
+            freeze_query_str("locationFreezeSessions", "sessionId", ""),
+            freeze_query_str("locationFreezeSummary", "device", ""),
+        ]
     }
 
     fn location_mutation(state: &str, extra: &str) -> String {
@@ -1682,11 +2113,16 @@ mod tests {
         let hub = Arc::new(TelemetryHub::new(10));
         let schema = test_schema(hub);
 
-        for query in [
-            r#"query { logEvents { id } }"#,
-            r#"query { interactionEvents { id } }"#,
-            r#"query { locations { id } }"#,
-        ] {
+        let queries: Vec<String> = [
+            r#"query { logEvents { id } }"#.to_string(),
+            r#"query { interactionEvents { id } }"#.to_string(),
+            r#"query { locations { id } }"#.to_string(),
+        ]
+        .into_iter()
+        .chain(freeze_queries())
+        .collect();
+
+        for query in &queries {
             for auth in [EVENTS_ONLY, TELEMETRY] {
                 let resp = schema.execute(request(query, auth)).await;
                 assert!(!resp.errors.is_empty(), "expected rejection for {query}");
@@ -1724,11 +2160,16 @@ mod tests {
         let hub = Arc::new(TelemetryHub::new(10));
         let schema = test_schema(hub);
 
-        for query in [
-            r#"query { logEvents { id } }"#,
-            r#"query { interactionEvents { id } }"#,
-            r#"query { locations { id } }"#,
-        ] {
+        let queries: Vec<String> = [
+            r#"query { logEvents { id } }"#.to_string(),
+            r#"query { interactionEvents { id } }"#.to_string(),
+            r#"query { locations { id } }"#.to_string(),
+        ]
+        .into_iter()
+        .chain(freeze_queries())
+        .collect();
+
+        for query in &queries {
             let resp = schema.execute(request(query, OBSERVER)).await;
             assert!(!resp.errors.is_empty(), "expected error for {query}");
             assert!(
@@ -1744,6 +2185,210 @@ mod tests {
         assert_eq!(TimeBucketSize::Minute.max_duration().num_days(), 7);
         assert_eq!(TimeBucketSize::Hour.max_duration().num_days(), 90);
         assert_eq!(TimeBucketSize::Day.max_duration().num_days(), 365);
+    }
+
+    #[tokio::test]
+    async fn freeze_queries_reject_inverted_time_range() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub);
+
+        let resp = schema
+            .execute(request(
+                r#"query {
+                    locationFreezes(filter: {
+                        from: "2026-07-02T00:00:00Z",
+                        to: "2026-07-01T00:00:00Z"
+                    }) { sessionId }
+                }"#,
+                OBSERVER,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(resp.errors[0]
+            .message
+            .contains("from must be earlier than to"));
+    }
+
+    #[tokio::test]
+    async fn freeze_queries_reject_span_beyond_ninety_days() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub);
+
+        let resp = schema
+            .execute(request(
+                r#"query {
+                    locationFreezeSessions(filter: {
+                        from: "2026-01-01T00:00:00Z",
+                        to: "2026-05-01T00:00:00Z"
+                    }) { sessionId }
+                }"#,
+                OBSERVER,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(
+            resp.errors[0].message.contains("90 days"),
+            "unexpected message: {}",
+            resp.errors[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn freeze_queries_reject_sub_second_gap_threshold() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub);
+
+        let resp = schema
+            .execute(request(
+                &freeze_query_str("locationFreezes", "sessionId", ", gapThresholdMs: 999"),
+                OBSERVER,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(
+            resp.errors[0].message.contains("gapThresholdMs"),
+            "unexpected message: {}",
+            resp.errors[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn freeze_queries_reject_negative_speed_threshold() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub);
+
+        let resp = schema
+            .execute(request(
+                &freeze_query_str(
+                    "locationFreezeSummary",
+                    "device",
+                    ", speedThresholdKmh: -1.0",
+                ),
+                OBSERVER,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(
+            resp.errors[0].message.contains("speedThresholdKmh"),
+            "unexpected message: {}",
+            resp.errors[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn freeze_queries_accept_defaulted_thresholds() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub);
+
+        // storage is disabled in tests, so passing validation surfaces as the
+        // storage error rather than a threshold complaint
+        let resp = schema
+            .execute(request(
+                &freeze_query_str("locationFreezes", "sessionId gapMs", ""),
+                OBSERVER,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(
+            resp.errors[0].message.contains("storage is disabled"),
+            "unexpected message: {}",
+            resp.errors[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn send_location_broadcasts_build_metadata() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(
+                r#"mutation {
+                    sendLocation(input: {
+                        sessionId: "sess-1",
+                        device: "dev",
+                        state: moving,
+                        lineId: 1,
+                        coords: { latitude: 35.6812, longitude: 139.7671, speed: 320.0 },
+                        timestamp: 1706000000000,
+                        appVersion: "10.4.2(101)",
+                        platform: ios,
+                        channel: canary
+                    }) { sessionId }
+                }"#,
+                TELEMETRY,
+            ))
+            .await;
+
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&snapshot[0]).unwrap();
+        assert_eq!(v["app_version"], "10.4.2(101)");
+        assert_eq!(v["platform"], "ios");
+        assert_eq!(v["channel"], "canary");
+    }
+
+    #[tokio::test]
+    async fn send_location_omits_build_metadata_when_not_sent() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(&location_mutation("moving", ""), TELEMETRY))
+            .await;
+
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let snapshot = hub.snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&snapshot[0]).unwrap();
+        assert!(v["app_version"].is_null());
+        assert!(v["platform"].is_null());
+        assert!(v["channel"].is_null());
+    }
+
+    #[tokio::test]
+    async fn send_location_rejects_blank_app_version() {
+        let hub = Arc::new(TelemetryHub::new(10));
+        let schema = test_schema(hub.clone());
+
+        let resp = schema
+            .execute(request(
+                r#"mutation {
+                    sendLocation(input: {
+                        sessionId: "sess-1",
+                        device: "dev",
+                        state: moving,
+                        lineId: 1,
+                        coords: { latitude: 35.6812, longitude: 139.7671 },
+                        timestamp: 1,
+                        appVersion: "   "
+                    }) { sessionId }
+                }"#,
+                TELEMETRY,
+            ))
+            .await;
+
+        assert!(!resp.errors.is_empty());
+        assert!(resp.errors[0].message.contains("appVersion"));
+        assert!(hub.snapshot().await.is_empty());
+    }
+
+    #[test]
+    fn millis_round_trip_through_the_freeze_conversions() {
+        assert_eq!(millis_to_datetime(0).timestamp_millis(), 0);
+        assert_eq!(
+            millis_to_datetime(1_706_000_000_000).timestamp_millis(),
+            1_706_000_000_000
+        );
+        assert_eq!(millis_to_u64(300_000), 300_000);
+        // corrupt data degrades to zero instead of failing the query
+        assert_eq!(millis_to_u64(-1), 0);
     }
 
     #[test]

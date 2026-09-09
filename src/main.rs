@@ -1,5 +1,6 @@
 mod config;
 mod domain;
+mod freeze;
 mod graphql;
 mod segment;
 mod server;

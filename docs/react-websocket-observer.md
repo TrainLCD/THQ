@@ -64,11 +64,16 @@ const ws = new WebSocket("wss://thq.example.com/ws", [
   "from_station_id": 1130201,
   "to_station_id": 1130202,
   "battery_level": 0.85,
-  "battery_state": 2
+  "battery_state": 2,
+  "app_version": "10.4.2(101)",
+  "platform": "ios | android | macos | unknown",
+  "channel": "production | canary"
 }
 ```
 
 `segment_id` / `from_station_id` / `to_station_id` はサーバー側の区間推定によって付与されます(トポロジ未設定時や推定不能時は `null`)。
+
+`app_version` / `platform` / `channel` はクライアントが `sendLocation` に付けて送るビルド情報で、`log` / `interaction` と同じ値です。送っていないクライアントでは `null` になります(THQ#30 で追加。詳細は [location-freeze-regression.md](./location-freeze-regression.md))。
 
 **log** — `sendLogEvent` Mutation で登録されたログ
 
@@ -145,6 +150,9 @@ export interface LocationUpdateEvent {
   to_station_id: number | null;
   battery_level: number | null;
   battery_state: 0 | 1 | 2 | 3 | null; // 0: UNKNOWN, 1: UNPLUGGED, 2: CHARGING, 3: FULL
+  app_version: string | null; // 送っていないクライアントでは null
+  platform: "ios" | "android" | "macos" | "unknown" | null;
+  channel: "production" | "canary" | null;
 }
 
 export interface LogEvent {
